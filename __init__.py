@@ -10,4 +10,4 @@
 __version__ = '0.1.0'
 
 from .lib import *
-from virtualchain import get_db, refresh_index, run_virtualchain, stop_virtualchain
+from virtualchain import get_db, refresh_index, setup_virtualchain, run_virtualchain, stop_virtualchain
