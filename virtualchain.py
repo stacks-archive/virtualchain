@@ -26,9 +26,6 @@ from .lib import workpool
 from .lib.blockchain import session
 from pybitcoin import BitcoindClient, ChainComClient
 
-# load the actual virtual implementation methods
-import impl
-
 log = session.log
 
 # global instance of our implementation's database indexer
@@ -37,10 +34,17 @@ db = None
 # global flag indicating that we're running
 running = False
 
+# global factory method for connecting to bitcoind 
+# (can be overwritten to mock a blockchain)
+connect_bitcoind = session.connect_bitcoind
+
+
 def signal_handler(signal, frame):
     """
     Handle Ctrl+C (SIGINT)
     """
+    impl = config.get_implementation()
+    
     log.info('\n')
     log.info('Exiting %s' % impl.get_virtual_chain_name())
     sys.exit(0)
@@ -63,6 +67,7 @@ def get_db():
    """
    
    global db 
+   impl = config.get_implementation()
    
    if db is None:
       
@@ -127,6 +132,7 @@ def run_virtualchain():
    """
    
    global running 
+   global connect_bitcoind
    
    config_file = config.get_config_filename()
    bitcoin_opts = config.get_bitcoind_config( config_file )
@@ -141,7 +147,7 @@ def run_virtualchain():
    
    try:
       
-      bitcoind = session.connect_bitcoind( bitcoin_opts )
+      bitcoind = connect_bitcoind( bitcoin_opts )
       
    except Exception, e:
       log.exception(e)
@@ -160,6 +166,21 @@ def run_virtualchain():
       _, last_block_id = indexer.get_index_range( bitcoind )
 
 
+
+def setup_virtualchain( impl_module, bitcoind_connection_factory=session.connect_bitcoind ):
+   """
+   Set up the virtual blockchain.
+   Use the given virtual blockchain core logic.
+   """
+   
+   global connect_bitcoind 
+   
+   config.set_implementation( impl_module )
+   connect_bitcoind=bitcoind_connection_factory
+   
+
 if __name__ == '__main__':
     
+   import impl_ref
+   setup_virtualchain( impl_ref )
    run_virtualchain()
