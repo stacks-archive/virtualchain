@@ -32,6 +32,7 @@ import workpool
 import blockchain.transactions as transactions
 import blockchain.session as session
 from multiprocessing import Pool
+from ..impl_ref import reference            # default no-op database implementation
 
 log = session.log
 
@@ -70,7 +71,7 @@ class VirtualChainDB:
     * "Snapshotting" means calculating the consensus hash of the database at block N.
     """
     
-    def __init__(self, magic_bytes, opcodes, state=None, op_order=None ):
+    def __init__(self, magic_bytes, opcodes, impl=reference, state=None, op_order=None ):
         """
         Construct a database client, optionally from locally-cached 
         database state and the set of previously-calculated consensus 
@@ -110,7 +111,8 @@ class VirtualChainDB:
         self.opcodes = opcodes
         self.state = state
         self.op_order = op_order
-        self.lastblock = impl.get_first_block_id()
+        self.impl = impl
+        self.lastblock = self.impl.get_first_block_id()
         
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
@@ -191,7 +193,7 @@ class VirtualChainDB:
         with open(tmp_lastblock_filename, "w") as lastblock_f:
             lastblock_f.write("%s" % block_id)
          
-        rc = impl.db_save( tmp_db_filename )
+        rc = self.impl.db_save( tmp_db_filename )
         if not rc:
            # failed to save 
            os.unlink( tmp_lastblock_filename )
@@ -235,7 +237,7 @@ class VirtualChainDB:
       """
       
       hashes = []
-      for serialized_record in impl.db_iterable():
+      for serialized_record in self.impl.db_iterable():
          
          record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
          hashes.append( record_hash )
@@ -282,7 +284,7 @@ class VirtualChainDB:
       # looks like a valid op.  Try to parse it.
       op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
       
-      op = impl.db_parse( block_id, op_payload, outputs, senders, fee, state=self.state )
+      op = self.impl.db_parse( block_id, op_payload, outputs, senders, fee, state=self.state )
       
       if op is None:
          # not valid 
@@ -332,7 +334,7 @@ class VirtualChainDB:
        pending_ops = defaultdict(list)
        
        for op in ops:
-          rc = impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op, state=self.state )
+          rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op, state=self.state )
           if rc:
             # good to go 
             pending_ops[ op['virtualchain_opcode'] ].append( op )
@@ -356,7 +358,7 @@ class VirtualChainDB:
           op_list = pending_ops[ opcode ]
           for op in op_list:
              
-             impl.db_commit( block_id, opcode, op, state=self.state )
+             self.impl.db_commit( block_id, opcode, op, state=self.state )
        
     
     def process_block( self, block_id, txs ):
