@@ -17,6 +17,13 @@ def get_virtual_chain_name():
    return "virtualchain-test"
 
 
+def get_virtual_chain_version():
+   """
+   Get the version string for this virtual chain.
+   """
+   return "v0.01-beta"
+
+
 def get_first_block_id():
    """
    Get the id of the first block to start indexing.
