@@ -16,5 +16,5 @@ import workpool
 
 from config import *
 from blockchain import *
-from indexer import VirtualChainDB, get_index_range
+from indexer import StateEngine, get_index_range
 from workpool import multiprocess_bitcoind, multiprocess_batch_size

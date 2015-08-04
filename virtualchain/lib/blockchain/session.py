@@ -70,9 +70,9 @@ class BitcoindConnection( httplib.HTTPSConnection ):
       
 
 def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_https ):
-   
     """
     Creates an RPC client to a bitcoind instance.
+    It will have ".opts" defined as a member, which will be a dict that stores the above connection options.
     """
     
     global do_wrap_socket, create_ssl_authproxy
@@ -87,15 +87,17 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
     
     authproxy_config_uri = '%s://%s:%s@%s:%s' % (protocol, rpc_username, rpc_password, server, port)
     
+    # TODO: ship with a cert
     if do_wrap_socket:
        # ssl._create_unverified_context and ssl.create_default_context are not supported.
        # wrap the socket directly 
        connection = BitcoindConnection( server, int(port) )
-       return AuthServiceProxy(authproxy_config_uri, connection=connection)
+       ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
+       
        
     elif create_ssl_authproxy:
        # ssl has _create_unverified_context, so we're good to go 
-       return AuthServiceProxy(authproxy_config_uri)
+       ret = AuthServiceProxy(authproxy_config_uri)
     
     else:
        # have to set up an unverified context ourselves 
@@ -103,7 +105,19 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
        ssl_ctx.check_hostname = False
        ssl_ctx.verify_mode = ssl.CERT_NONE
        connection = httplib.HTTPSConnection( server, int(port), context=ssl_ctx )
-       return AuthServiceProxy(authproxy_config_uri, connection=connection)
+       ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
+       
+    # remember the options 
+    bitcoind_opts = {
+       "bitcoind_user": rpc_username,
+       "bitcoind_passwd": rpc_password,
+       "bitcoind_server": server,
+       "bitcoind_port": port,
+       "bitcoind_use_https": use_https
+    }
+    
+    setattr( ret, "opts", bitcoind_opts )
+    return ret
 
 
 def connect_bitcoind( bitcoind_opts ):

@@ -8,6 +8,7 @@
 """
 
 import os
+import argparse
 from ConfigParser import SafeConfigParser
 
 DEBUG = True
@@ -15,8 +16,15 @@ TESTNET = False
 TESTSET = True
 IMPL = None             # class, package, or instance that implements the virtual chain state
 
-""" constants
+""" virtualchain daemon configs
 """
+
+RPC_TIMEOUT = 5  # seconds 
+
+MULTIPROCESS_RPC_RETRY = 3
+
+REINDEX_FREQUENCY = 10  # in seconds
+
 AVERAGE_MINUTES_PER_BLOCK = 10
 DAYS_PER_YEAR = 365.2424
 HOURS_PER_DAY = 24
@@ -25,29 +33,20 @@ SECONDS_PER_MINUTE = 60
 MINUTES_PER_YEAR = DAYS_PER_YEAR*HOURS_PER_DAY*MINUTES_PER_HOUR
 SECONDS_PER_YEAR = int(round(MINUTES_PER_YEAR*SECONDS_PER_MINUTE))
 BLOCKS_PER_YEAR = int(round(MINUTES_PER_YEAR/AVERAGE_MINUTES_PER_BLOCK))
+EXPIRATION_PERIOD = BLOCKS_PER_YEAR*1
 AVERAGE_BLOCKS_PER_HOUR = MINUTES_PER_HOUR/AVERAGE_MINUTES_PER_BLOCK
-
-""" virtualchain daemon configs
-"""
-
-VERSION = 'v0.1-beta'
-RPC_TIMEOUT = 5  # seconds 
-
-# how often do we retry RPCs when talking to bitcoind?
-MULTIPROCESS_RPC_RETRY = 3
-
-""" block indexing configs
-"""
-
-REINDEX_FREQUENCY = 10  # in seconds
-
-""" consensus hash configs
-"""
 
 BLOCKS_CONSENSUS_HASH_IS_VALID = 4*AVERAGE_BLOCKS_PER_HOUR
 
-""" Validation 
-"""
+
+def get_first_block_id():
+   """
+   facade to implementation's first block 
+   """
+   global IMPL 
+   
+   return IMPL.get_first_block_id()
+
 
 def get_working_dir():
    """
@@ -80,14 +79,26 @@ def get_config_filename():
 
 def get_db_filename():
    """
-   Get the absolute path to the chain's database file.
+   Get the absolute path to the last-block file.
    """
    global IMPL 
    
    working_dir = get_working_dir()
-   db_filename = IMPL.get_virtual_chain_name() + ".db"
+   lastblock_filename = IMPL.get_virtual_chain_name() + ".db"
    
-   return os.path.join( working_dir, db_filename )
+   return os.path.join( working_dir, lastblock_filename )
+
+
+def get_lastblock_filename():
+   """
+   Get the absolute path to the last-block file.
+   """
+   global IMPL 
+   
+   working_dir = get_working_dir()
+   lastblock_filename = IMPL.get_virtual_chain_name() + ".lastblock"
+   
+   return os.path.join( working_dir, lastblock_filename )
 
 
 def get_snapshots_filename():
@@ -97,7 +108,7 @@ def get_snapshots_filename():
    global IMPL 
    
    working_dir = get_working_dir()
-   snapshots_filename = impl.get_virtual_chain_name() + ".snapshots"
+   snapshots_filename = IMPL.get_virtual_chain_name() + ".snapshots"
    
    return os.path.join( working_dir, snapshots_filename )
 
@@ -117,7 +128,7 @@ def configure_multiprocessing( bitcoind_opts ):
    if bitcoind_opts.get("bitcoind_server", None) is None:
       return (None, None)
    
-   if bitcoind["bitcoind_server"] in ["localhost", "127.0.0.1", "::1"]:
+   if bitcoind_opts["bitcoind_server"] in ["localhost", "127.0.0.1", "::1"]:
       # running locally 
       return (1, 64)
    
@@ -189,7 +200,7 @@ def parse_bitcoind_args( return_parser=False, parser=None ):
     opts = {}
     
     if parser is None:
-       parser = argparse.ArgumentParser( description='%s version %s' % (IMPL.get_virtual_chain_name, IMPL.get_virtual_chain_version()))
+       parser = argparse.ArgumentParser( description='%s version %s' % (IMPL.get_virtual_chain_name(), IMPL.get_virtual_chain_version()))
 
     parser.add_argument(
         '--bitcoind-server',

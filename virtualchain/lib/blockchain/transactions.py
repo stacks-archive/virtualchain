@@ -38,6 +38,18 @@ def get_bitcoind( bitcoind_or_opts ):
       # already an endpoint 
       return bitcoind_or_opts
    
+   
+def get_bitcoind_opts( bitcoind_or_opts ):
+   """
+   Given either a bitcoind API endpoint proxy,
+   or a dict of options, generate the set of options.
+   """
+   if type(bitcoind_or_opts) == types.DictType:
+      return bitcoind_or_opts
+   
+   else:
+      return bitcoind_or_opts.opts 
+   
 
 def getrawtransaction( bitcoind_or_opts, block_hash, txid, verbose=0 ):
    """
@@ -64,7 +76,8 @@ def getrawtransaction( bitcoind_or_opts, block_hash, txid, verbose=0 ):
             log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
             log.exception(e)
             exc_to_raise = e
-            bitcoind = multiprocess_bitcoind(reset=True)
+            new_opts = get_bitcoind_opts( bitcoind_or_opts )
+            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue 
             
          return tx 
@@ -116,7 +129,8 @@ def getblockhash( bitcoind_or_opts, block_number ):
             log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
             log.exception(e)
             exc_to_raise = e
-            bitcoind = multiprocess_bitcoind(reset=True)
+            new_opts = get_bitcoind_opts( bitcoind_or_opts )
+            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue 
          
          return block_hash
@@ -153,31 +167,23 @@ def getblock( bitcoind_or_opts, block_hash ):
    bitcoind = get_bitcoind( bitcoind_or_opts )
    
    for i in xrange(0, MULTIPROCESS_RPC_RETRY):
-      try:
-         if bitcoind is None:
-            # multiprocess context 
-            bitcoind = multiprocess_bitcoind()   
-         
-         try:
-            
-            block_data = bitcoind.getblock( block_hash )
-         except JSONRPCException, je:
-            log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
-            exc_to_raise = je
-            continue
-         except Exception, e:
-            log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
-            log.exception(e)
-            exc_to_raise = e
-            bitcoind = multiprocess_bitcoind( reset=True )
-            continue     
-    
-         return block_data 
       
+      try:
+         block_data = bitcoind.getblock( block_hash )
+         
+      except JSONRPCException, je:
+         log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
+         exc_to_raise = je
+         continue
       except Exception, e:
+         log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
          log.exception(e)
          exc_to_raise = e
+         new_opts = get_bitcoind_opts( bitcoind_or_opts )
+         bitcoind = multiprocess_bitcoind( new_opts, reset=True)
          continue
+   
+      return block_data 
       
    if exc_to_raise is not None:
       raise exc_to_raise
@@ -431,6 +437,8 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       block_times = {}          # {block_number: time taken to process}
       
       block_slice = blocks_ids[ (slice_count * slice_len) : min((slice_count+1) * slice_len, len(blocks_ids)-1) ]
+      if len(block_slice) == 0:
+         break
       
       start_slice_time = time.time()
       
@@ -620,7 +628,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       log.debug("blocks %s-%s (%s):" % (block_slice[0], block_slice[-1], len(block_slice)) )
       log.debug("  Time total:     %s" % total_processing_time )
       log.debug("  Data total:     %s" % total_data )
-      log.debug("  Total goodput:  %s" % (total_hit_data / (total_hit_processing_time + 1e-7)))
+      log.debug("  Total goodput:  %s" % (total_data / (total_processing_time + 1e-7)))
       log.debug("  block hash time:        %s" % block_hash_time)
       log.debug("  block data time:        %s" % block_data_time)
       log.debug("  block tx time:          %s" % block_tx_time)

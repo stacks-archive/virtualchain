@@ -21,15 +21,14 @@ from ConfigParser import SafeConfigParser
 
 from txjsonrpc.netstring import jsonrpc
 
-from .lib import config
-from .lib import workpool
+from .lib import config, workpool, indexer
 from .lib.blockchain import session
 from pybitcoin import BitcoindClient, ChainComClient
 
 log = session.log
 
-# global instance of our implementation's database indexer
-db = None 
+# global instance of our implementation's state engine
+state_engine = None 
 
 # global flag indicating that we're running
 running = False
@@ -37,18 +36,6 @@ running = False
 # global factory method for connecting to bitcoind 
 # (can be overwritten to mock a blockchain)
 connect_bitcoind = session.connect_bitcoind
-
-
-def signal_handler(signal, frame):
-    """
-    Handle Ctrl+C (SIGINT)
-    """
-    impl = config.get_implementation()
-    
-    log.info('\n')
-    log.info('Exiting %s' % impl.get_virtual_chain_name())
-    sys.exit(0)
-
 
 def json_traceback():
     """
@@ -61,46 +48,24 @@ def json_traceback():
     }
 
 
-def get_db():
-   """
-   Get or instantiate the virtual chain's state database.
-   """
-   
-   global db 
-   impl = config.get_implementation()
-   
-   if db is None:
-      
-      # load! 
-      opcodes = impl.get_opcodes()
-      magic_bytes = impl.get_magic_bytes()
-      db_state = impl.get_db_state()
-      opcode_order = impl.get_op_processing_order()
-      
-      db = indexer.VirtualChainDB( magic_bytes, opcodes, state=db_state, op_order=opcode_order )
-      return db
-   
-   else:
-      return db
-
-
-def refresh_index( bitcoind_opts, last_block):
+def sync_virtualchain( bitcoind_opts, last_block, state_engine ):
     """
+    Synchronize the virtual blockchain state up until a given block.
+    
     Obtain the operation sequence from the blockchain, up to and including last_block.
     That is, go and fetch each block we haven't seen since the last call to this method,
     extract the operations from them, and record in the given working_dir where we left 
     off while watching the blockchain.
     
-    Store the operations database, consensus snapshots, and last block to the working directory.
+    Store the state engine state, consensus snapshots, and last block to the working directory.
     Return 0 on success 
     Raise an exception on error
     """
     
     start = datetime.datetime.now()
     
-    # advance the database 
-    db = get_db()
-    db.build( bitcoind_opts, last_block+1 )
+    # advance state 
+    state_engine.build( bitcoind_opts, last_block+1 )
     
     time_taken = "%s seconds" % (datetime.datetime.now() - start).seconds
     log.info(time_taken)
@@ -120,8 +85,7 @@ def stop_virtualchain():
 
 def run_virtualchain():
    """
-   Run the virtual blockchain.
-   Continuously and periodically update the database.
+   Continuously and periodically feed new blocks into the state engine.
    This method loops pretty much forever; consider calling 
    it from a thread or in a subprocess.  You can stop 
    it with stop_virtualchain(), but it only sets a 
@@ -159,7 +123,7 @@ def run_virtualchain():
    while running:
       
       # keep refreshing the index
-      refresh_index( bitcoin_opts, last_block_id )
+      sync_virtualchain( bitcoin_opts, last_block_id )
       
       time.sleep( config.REINDEX_FREQUENCY )
       

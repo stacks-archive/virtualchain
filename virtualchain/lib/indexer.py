@@ -23,36 +23,38 @@ import threading
 import time
 import socket
 import binascii
-from utilitybelt import is_valid_int
 import pybitcoin
-from ConfigParser import SafeConfigParser
+
+from collections import defaultdict 
 
 import config
 import workpool
-import blockchain.transactions as transactions
-import blockchain.session as session
+from .blockchain import transactions, session 
 from multiprocessing import Pool
-from ..impl_ref import reference            # default no-op database implementation
+from ..impl_ref import reference            # default no-op state engine implementation
 
 log = session.log
 
-class VirtualChainDB:
+class StateEngine( object ):
     """
     Client to the virtual chain's database of operations, constructed and  
     kept synchronized with records in the underlying blockchain.  If the blockchain 
     is the ledger of all operations to have ever been committed 
-    (including invalid and fraudulent ones), then this databse represents the 
-    current state defined by applying all *valid* operations.
+    (including invalid and fraudulent ones), then the virtual chain is the subsequence 
+    of operations that we're interested in, and the state engine is the logic
+    for finding and processing the subsequence of these that are "valid."
     
-    Constructing the database is an iterative process.  Virtual chain data are 
+    The purpose of the state engine is to process records from the blockchain in order 
+    to carry out its application's core business logic.  This usually means building up a 
+    database over the set of virtual chain records.  Virtual chain data are 
     encoded in transactions data within the underlying cryptocurrency (i.e. OP_RETURNs in Bitcoin).
     Each block in the blockchain must be fed into the database, and the blocks' 
     operations extracted, validated, and accounted for.  As such, at block N,
-    the virtual chain database represents the current state of names and storage at block N.
+    the state engine would have a database represents the current state of names and storage at block N.
     
-    Because the underlying cryptocurrency blockchain can fork, virual chain peers need to 
+    Because the underlying cryptocurrency blockchain can fork, state engine peers need to 
     determine that they are on the smae fork so they will know which virtual chain operations 
-    to process.  To do so, the virtual chain database calculates a Merkle tree over its 
+    to process.  To do so, the state engine calculates a Merkle tree over its 
     current state (i.e. the set of names) at the current block, and encodes the root
     hash in each operation.  Then, one peer can tell that the other peer's operations
     were calculated on the same blockchain fork simply by ensuring that the operation had
@@ -61,26 +63,25 @@ class VirtualChainDB:
     
     Processing a block happens in five stages: "parse", "check", "log", "commit", and "snapshot"
     * "Parsing" a block transaction's nulldata (i.e. from an OP_RETURN) means translating 
-    the OP_RETURN data into a virtual chain operation.  Relevant methods are in ..parsing.
-    * "Checking" an operation means ensuring the operation is consistent with the state of the 
-    database constructed thus far.  Relevant methods are in .check.
-    * "Logging" an operation means staging an operation to be included in the database,
-    at the point of processing block N.  Relevant methods are in .log.
-    * "Committing" an operation means adding a logged operation to the current state of the 
-    database.
-    * "Snapshotting" means calculating the consensus hash of the database at block N.
+    the OP_RETURN data into a virtual chain operation.
+    * "Checking" an operation means ensuring the operation is valid.
+    * "Logging" an operation means staging an operation to be fed into the state engine.
+    * "Committing" an operation means feeding it into the state engine.
+    * "Snapshotting" means calculating the consensus hash of the state engine, at block N.
+    
+    Blocks are processed in order.
     """
     
-    def __init__(self, magic_bytes, opcodes, impl=reference, state=None, op_order=None ):
+    def __init__(self, magic_bytes, opcodes, impl=None, state=None, op_order=None ):
         """
-        Construct a database client, optionally from locally-cached 
-        database state and the set of previously-calculated consensus 
+        Construct a state engine client, optionally from locally-cached 
+        state and the set of previously-calculated consensus 
         hashes for each block.
         
         This class will be fed a sequence of sets of transactions, grouped by block 
         and ordered by block ID, that each contain an OP_RETURN.  The nulldata 
         assocated with the OP_RETURN will be parsed, checked, logged, and 
-        committed by the implementation.  The implementation decides exactly 
+        committed by the implementation (impl).  The implementation decides exactly 
         what each of these mean; this class simply feeds it the transactions
         in order.
         
@@ -99,7 +100,7 @@ class VirtualChainDB:
         The caller may supply an optional argument called 'state', which will be 
         passed into each implementation method.  It is meant to preserve implementation-
         specific state--in particular, whatever state the implementation expects to be 
-        present in the database.
+        present.
         
         The caller may also specify the order in which each type of operation is 
         processed, by passing a list of opcodes in op_order.
@@ -171,14 +172,21 @@ class VirtualChainDB:
         return True
     
     
-    def save(self, block_id):
+    def save( self, block_id, consensus_hash ):
         """
         Write out all state to the working directory.
         Calls the implementation's 'db_save' method.
         
         Return True on success 
         Return False on error
+        Raise exception if block_id represents a block 
+         we've already processed.
         """
+        
+        if block_id < self.lastblock:
+           raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
+        
+        self.consensus_hashes[ block_id ] = consensus_hash 
         
         tmp_db_filename = config.get_db_filename() + ".tmp"
         tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
@@ -192,39 +200,55 @@ class VirtualChainDB:
          
         with open(tmp_lastblock_filename, "w") as lastblock_f:
             lastblock_f.write("%s" % block_id)
-         
-        rc = self.impl.db_save( tmp_db_filename )
+        
+        
+        rc = self.impl.db_save( block_id, tmp_db_filename, db_state=self.state )
         if not rc:
            # failed to save 
+           log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
            os.unlink( tmp_lastblock_filename )
            os.unlink( tmp_snapshot_filename )
            return False
         
         for tmp_filename, filename in zip( [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
-                                           [config.get_lastblock_filename(), config.get_snapshots_filename(), config.get_lastblock_filename()] ):
+                                           [config.get_lastblock_filename(), config.get_snapshots_filename(), config.get_db_filename()] ):
                
-            # commit our new lastblock, consensus hash set, and database
+            # commit our new lastblock, consensus hash set, and state engine data
             try:
                # NOTE: rename fails on Windows if the destination exists 
                if sys.platform == 'win32':
-                  os.unlink( filename )
-                  
+                  try:
+                     os.unlink( filename )
+                  except:
+                     pass
+               
                os.rename( tmp_filename, filename )
-            except:
-               os.unlink( tmp_lastblock_filename )
-               os.unlink( tmp_snapshot_filename )
-               os.unlink( tmp_db_filename )
+            except Exception, e:
+               
+               log.exception(e)
+               
+               for path in [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename]:
+                  try:
+                     os.unlink( path )
+                  except:
+                     pass 
+                  
                return False 
-      
+        
         # clean up 
-        os.unlink( tmp_lastblock_filename )
-        os.unlink( tmp_snapshot_filename )
+        for tmp_file in [tmp_lastblock_filename, tmp_snapshot_filename]:
+           try:
+              os.unlink( tmp_file )
+           except:
+              pass
+           
+        self.lastblock = block_id
         return True
      
     
-    def calculate_consensus_hash( merkle_root ):
+    def calculate_consensus_hash( self, merkle_root ):
       """
-      Given the Merkle root of the database, calculate the consensus hash.
+      Given the Merkle root of the set of records processed, calculate the consensus hash.
       """
       return binascii.hexlify( pybitcoin.hash.bin_hash160(merkle_root, True)[0:16])
  
@@ -237,7 +261,7 @@ class VirtualChainDB:
       """
       
       hashes = []
-      for serialized_record in self.impl.db_iterable():
+      for serialized_record in self.impl.db_iterable( block_id, db_state=self.state ):
          
          record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
          hashes.append( record_hash )
@@ -252,7 +276,7 @@ class VirtualChainDB:
       consensus_hash = self.calculate_consensus_hash( root_hash )
       self.consensus_hashes[ block_id ] = consensus_hash 
       
-      return consensus_hash128 
+      return consensus_hash
    
    
     def parse_transaction( self, block_id, tx ):
@@ -261,6 +285,13 @@ class VirtualChainDB:
       try to parse it into a virtual chain operation.
       
       Use the implementation's 'db_parse' method to do so.
+      
+      Set the following fields in op:
+      * virtualchain_opcode:   the operation code 
+      * virtualchain_outputs:  the list of transaction outputs
+      * virtualchain_senders:  the list of transaction senders 
+      * virtualchain_fee:      the total amount of money sent
+      * virtualchain_block_number:  the block ID in which this transaction occurred
       
       Return a dict representing the data on success.
       Return None on error
@@ -271,7 +302,7 @@ class VirtualChainDB:
       senders = tx['senders']
       fee = tx['fee']
       
-      op_return_bin = unhexlify( op_return_hex )
+      op_return_bin = binascii.unhexlify( op_return_hex )
       
       if not op_return_bin.startswith( self.magic_bytes ):
          return None
@@ -284,7 +315,7 @@ class VirtualChainDB:
       # looks like a valid op.  Try to parse it.
       op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
       
-      op = self.impl.db_parse( block_id, op_payload, outputs, senders, fee, state=self.state )
+      op = self.impl.db_parse( block_id, op_payload, outputs, senders, fee, db_state=self.state )
       
       if op is None:
          # not valid 
@@ -295,6 +326,7 @@ class VirtualChainDB:
       op['virtualchain_outputs'] = outputs 
       op['virtualchain_senders'] = senders 
       op['virtualchain_fee'] = fee
+      op['virtualchain_block_number'] = block_id
       
       return op
    
@@ -322,7 +354,7 @@ class VirtualChainDB:
     def log_pending_ops( self, block_id, ops ):
        """
        Given a sequence of parsed operations, stage them 
-       in preparation for adding them to the database.
+       in preparation for adding them to the state engine.
        This calls the 'db_check' operation in the implementation,
        to verify whether or not the operation should be 
        staged or not.
@@ -334,19 +366,21 @@ class VirtualChainDB:
        pending_ops = defaultdict(list)
        
        for op in ops:
-          rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op, state=self.state )
+          rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op, db_state=self.state )
           if rc:
             # good to go 
             pending_ops[ op['virtualchain_opcode'] ].append( op )
           
+       return pending_ops
+    
 
     def commit_pending_ops( self, block_id, pending_ops ):
        """
        Given the logged set of pending operations for this block,
-       merge them into the database.
+       merge them into the implementation's state.
        
        This method calls the implementation's 'db_commit' method to 
-       add parsed and checked opcodes to the database.
+       add parsed and checked opcodes.
        """
        
        op_order = self.op_order
@@ -358,7 +392,7 @@ class VirtualChainDB:
           op_list = pending_ops[ opcode ]
           for op in op_list:
              
-             self.impl.db_commit( block_id, opcode, op, state=self.state )
+             self.impl.db_commit( block_id, opcode, op, db_state=self.state )
        
     
     def process_block( self, block_id, txs ):
@@ -366,7 +400,7 @@ class VirtualChainDB:
        Top-level block processing method.
        Feed the block and its OP_RETURN transactions 
        through the implementation, to build up the 
-       implementation's database state.  Cache the 
+       implementation's state.  Cache the 
        resulting data to disk.
        
        Return the consensus hash for this block.
@@ -379,8 +413,9 @@ class VirtualChainDB:
        
        consensus_hash = self.snapshot( block_id )
        
-       rc = self.save( block_id )
+       rc = self.save( block_id, consensus_hash )
        if not rc:
+          log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
           return None 
        
        return consensus_hash
@@ -390,14 +425,9 @@ class VirtualChainDB:
        """
        Top-level call to process all blocks in the blockchain.
        Goes and fetches all OP_RETURN nulldata in order,
-       and constructs the database from them, using the 
-       'parse', 'check', 'commit', and periodically the 'save'
-       implementation methods.
-       
-       AFter each batch is fetched, the database 
-       will save its work with the implementation's 'save' method.
-       This is to allow the daemon to pick up where it left off,
-       should it be interrupted in processing a lot of blocks.
+       and feeds them into the state engine implementation using its
+       'db_parse', 'db_check', 'db_commit', and 'db_save'
+       methods.
        
        Note that this method can take some time (hours) to complete 
        when called from the first block.
@@ -411,12 +441,15 @@ class VirtualChainDB:
 
        pool = Pool( processes=num_workers )
        
-       for block_id in xrange( first_block_id, end_block_id, worker_batch_size ):
+       for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
           
-          block_ids = range( first_block_id, first_block_id + worker_batch_size )
+          block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
           
           # returns: [(block_id, txs)]
-          block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( workpool, bitcoind_opts, block_ids )
+          block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( pool, bitcoind_opts, block_ids )
+          
+          # process in order by block ID
+          block_ids_and_txs.sort()
           
           for block_id, txs in block_ids_and_txs:
              
@@ -427,13 +460,48 @@ class VirtualChainDB:
                 log.error("Failed to process block %d" % block_id )
                 return False 
        
-          # checkpoint ourselves...
-          self.save( block_ids[-1] )
-          
+       
        pool.close()
        pool.join()
        return True
        
+       
+    def get_consensus_at( self, block_id ):
+       """
+       Get the consensus hash at a given block
+       """
+       return self.consensus_hashes[ block_id ]
+    
+    
+    def get_current_consensus(self):
+       """
+       Get the current consensus hash.
+       """
+       return self.get_consensus_at( self, self.lastblock )
+    
+    
+    def is_consensus_hash_valid( self, block_id, consensus_hash ):
+       """
+       Given a block ID and a consensus hash, is 
+       the hash still considered to be valid?
+       We allow a grace period for which a consensus hash 
+       is valid, since a writer might submit a 
+       "recently stale" consensus hash under 
+       heavy write load.
+       """
+       
+       # search current and previous blocks
+       first_block_to_check = block_id - config.BLOCKS_CONSENSUS_HASH_IS_VALID
+       
+       for block_number in xrange(first_block_to_check, current_block_number):
+          
+         if block_number not in self.consensus_hashes:
+            continue
+         
+         if str(consensus_hash) == str(self.consensus_hashes[block_number]):
+            return True
+         
+       return False
       
 
 def get_index_range( bitcoind ):
@@ -449,6 +517,7 @@ def get_index_range( bitcoind ):
        current_block = int(bitcoind.getblockcount())
         
     except Exception, e:
+       log.exception(e)
        return None
 
     # check our last known file
@@ -478,4 +547,5 @@ def get_index_range( bitcoind ):
         start_block = saved_block + 1
 
     return start_block, current_block
-   
+    
+    
