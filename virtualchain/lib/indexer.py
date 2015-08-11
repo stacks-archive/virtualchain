@@ -1,11 +1,26 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-    virtualchain
+    Virtualchain
     ~~~~~
-    :copyright: (c) 2015 by Openname.org
-    :license: MIT, see LICENSE for more details.
+    copyright: (c) 2014 by Halfmoon Labs, Inc.
+    copyright: (c) 2015 by Blockstack.org
+    
+    This file is part of Virtualchain
+    
+    Virtualchain is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+    
+    Virtualchain is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+    You should have received a copy of the GNU General Public License
+    along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
+
 
 import argparse
 import logging
@@ -72,6 +87,14 @@ class StateEngine( object ):
     Blocks are processed in order.
     """
     
+    RESERVED_KEYS = [
+       'virtualchain_opcode',
+       'virtualchain_outputs',
+       'virtualchain_senders',
+       'virtualchain_fee',
+       'virtualchain_block_number'
+    ]
+    
     def __init__(self, magic_bytes, opcodes, impl=None, state=None, op_order=None ):
         """
         Construct a state engine client, optionally from locally-cached 
@@ -121,11 +144,16 @@ class StateEngine( object ):
         # attempt to load the snapshots 
         if os.path.exists( consensus_snapshots_filename ):
            try:
+              
               with open(consensus_snapshots_filename, 'r') as f:
+                 
                  db_dict = json.loads(f.read())
-              if 'snapshots' in db_dict:
-                 self.consensus_hashes = db_dict['snapshots']
+                 
+                 if 'snapshots' in db_dict:
+                     self.consensus_hashes = db_dict['snapshots']
+                 
            except Exception, e:
+              log.exception(e)
               pass
              
         # what was the last block processed?
@@ -136,6 +164,7 @@ class StateEngine( object ):
                  self.lastblock = int(lastblock_str)
               
            except Exception, e:
+              log.exception(e)
               pass 
         
              
@@ -172,7 +201,7 @@ class StateEngine( object ):
         return True
     
     
-    def save( self, block_id, consensus_hash ):
+    def save( self, block_id ):
         """
         Write out all state to the working directory.
         Calls the implementation's 'db_save' method.
@@ -185,8 +214,6 @@ class StateEngine( object ):
         
         if block_id < self.lastblock:
            raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
-        
-        self.consensus_hashes[ block_id ] = consensus_hash 
         
         tmp_db_filename = config.get_db_filename() + ".tmp"
         tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
@@ -274,7 +301,7 @@ class StateEngine( object ):
       root_hash = merkle_tree.root()
       
       consensus_hash = self.calculate_consensus_hash( root_hash )
-      self.consensus_hashes[ block_id ] = consensus_hash 
+      self.consensus_hashes[ str(block_id) ] = consensus_hash 
       
       return consensus_hash
    
@@ -315,7 +342,7 @@ class StateEngine( object ):
       # looks like a valid op.  Try to parse it.
       op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
       
-      op = self.impl.db_parse( block_id, op_payload, outputs, senders, fee, db_state=self.state )
+      op = self.impl.db_parse( block_id, op_code, op_payload, senders, outputs, fee, db_state=self.state )
       
       if op is None:
          # not valid 
@@ -349,7 +376,26 @@ class StateEngine( object ):
             ops.append( op )
             
       return ops
-    
+   
+   
+    def remove_reserved_keys( self, op ):
+       """
+       Remove reserved keywords from an op dict,
+       which can then safely be passed into the db.
+       
+       Returns a new op dict, and the reserved fields
+       """
+       sanitized = {}
+       reserved = {}
+       
+       for k in op.keys():
+          if k not in self.RESERVED_KEYS:
+             sanitized[k] = op[k]
+          else:
+             reserved[k] = op[k]
+             
+       return sanitized, reserved
+          
     
     def log_pending_ops( self, block_id, ops ):
        """
@@ -366,10 +412,14 @@ class StateEngine( object ):
        pending_ops = defaultdict(list)
        
        for op in ops:
-          rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op, db_state=self.state )
+          
+          op_sanitized, reserved = self.remove_reserved_keys( op )
+          
+          rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op_sanitized, db_state=self.state )
           if rc:
             # good to go 
-            pending_ops[ op['virtualchain_opcode'] ].append( op )
+            op_sanitized.update( reserved )
+            pending_ops[ op_sanitized['virtualchain_opcode'] ].append( op_sanitized )
           
        return pending_ops
     
@@ -392,7 +442,9 @@ class StateEngine( object ):
           op_list = pending_ops[ opcode ]
           for op in op_list:
              
-             self.impl.db_commit( block_id, opcode, op, db_state=self.state )
+             op_sanitized, op_reserved = self.remove_reserved_keys( op )
+             
+             self.impl.db_commit( block_id, opcode, op_sanitized, db_state=self.state )
        
     
     def process_block( self, block_id, txs ):
@@ -413,7 +465,7 @@ class StateEngine( object ):
        
        consensus_hash = self.snapshot( block_id )
        
-       rc = self.save( block_id, consensus_hash )
+       rc = self.save( block_id )
        if not rc:
           log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
           return None 
@@ -451,13 +503,18 @@ class StateEngine( object ):
           # process in order by block ID
           block_ids_and_txs.sort()
           
-          for block_id, txs in block_ids_and_txs:
+          log.info("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
              
-             consensus_hash = self.process_block( block_id, txs )
+          for processed_block_id, txs in block_ids_and_txs:
+             
+             consensus_hash = self.process_block( processed_block_id, txs )
+             
+             log.info("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )) )
+             
              if consensus_hash is None:
                 
                 # fatal error 
-                log.error("Failed to process block %d" % block_id )
+                log.error("Failed to process block %d" % processed_block_id )
                 return False 
        
        
@@ -470,14 +527,14 @@ class StateEngine( object ):
        """
        Get the consensus hash at a given block
        """
-       return self.consensus_hashes[ block_id ]
+       return self.consensus_hashes.get( str(block_id), None )
     
     
     def get_current_consensus(self):
        """
        Get the current consensus hash.
        """
-       return self.get_consensus_at( self, self.lastblock )
+       return self.get_consensus_at( str(self.lastblock) )
     
     
     def is_consensus_hash_valid( self, block_id, consensus_hash ):
@@ -492,13 +549,14 @@ class StateEngine( object ):
        
        # search current and previous blocks
        first_block_to_check = block_id - config.BLOCKS_CONSENSUS_HASH_IS_VALID
-       
-       for block_number in xrange(first_block_to_check, current_block_number):
+       for block_number in xrange(first_block_to_check, block_id):
           
-         if block_number not in self.consensus_hashes:
+         block_number_key = str(block_number)
+         
+         if block_number_key not in self.consensus_hashes.keys():
             continue
          
-         if str(consensus_hash) == str(self.consensus_hashes[block_number]):
+         if str(consensus_hash) == str(self.consensus_hashes[block_number_key]):
             return True
          
        return False
