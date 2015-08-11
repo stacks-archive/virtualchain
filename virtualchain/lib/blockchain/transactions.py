@@ -1,10 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-    virtualchain
+    Virtualchain
     ~~~~~
-    :copyright: (c) 2015 by Openname.org
-    :license: MIT, see LICENSE for more details.
+    copyright: (c) 2014 by Halfmoon Labs, Inc.
+    copyright: (c) 2015 by Blockstack.org
+    
+    This file is part of Virtualchain
+    
+    Virtualchain is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+    
+    Virtualchain is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+    You should have received a copy of the GNU General Public License
+    along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 from .nulldata import get_nulldata, has_nulldata
@@ -237,43 +251,6 @@ def get_sender_and_amount_in_from_txn( tx, output_index ):
    return sender, amount_in
 
 
-def get_senders_and_total_in( bitcoind_or_opts, block_hash, inputs ):
-        
-   senders = []
-   total_in = 0
-   bitcoind = get_bitcoind( bitcoind_or_opts )
-      
-   # analyze the inputs for the senders and the total amount in
-   for input in inputs:
-      # make sure the input is valid
-      if not ('txid' in input and 'vout' in input):
-         continue
-
-      # get the tx data for the specified input
-      tx_hash = input['txid']
-      tx_output_index = input['vout']
-      
-      # log.debug("getrawtransaction( '%s', 1 )" % tx_hash )
-      
-      tx = getrawtransaction( bitcoind, block_hash, tx_hash, 1 )
-      
-      # make sure the tx is valid
-      if not ('vout' in tx and tx_output_index < len(tx['vout'])):
-         continue
-
-      sender, amount_in = get_sender_and_amount_in_from_txn( tx, tx_output_index )
-      if sender is None or amount_in is None:
-         continue
-      
-      senders.append(sender)
-      
-      # increment the total amount going in to the transaction
-      total_in += amount_in
-
-   # return the senders and the total in
-   return senders, total_in
-
-
 def get_total_out(outputs):
     total_out = 0
     # analyze the outputs for the total amount out
@@ -281,32 +258,7 @@ def get_total_out(outputs):
         amount_out = int(output['value']*10**8)
         total_out += amount_out
     return total_out
-
-
-def process_nulldata_tx( bitcoind, block_hash, tx ):
-    """
-    Given a transaction and its block's hash, go and find 
-    all of its senders, its OP_RETURN nulldata, and its 
-    total input value.
-    
-    Returns the tx given, with 'nulldata', 'senders', and 'fee' set.
-    """
-    if not ('vin' in tx and 'vout' in tx and 'txid' in tx):
-        return None
-
-    inputs, outputs, txid = tx['vin'], tx['vout'], tx['txid']
-    senders, total_in = get_senders_and_total_in(bitcoind, block_hash, inputs )
-    total_out = get_total_out( outputs )
-    nulldata = get_nulldata(tx)
-
-    # extend the tx
-    tx['nulldata'] = nulldata
-    tx['senders'] = senders
-    tx['fee'] = total_in - total_out
-    # print tx['fee']
-
-    return tx
-
+ 
 
 def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
     """
@@ -333,6 +285,7 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
         return None
 
     inputs = tx['vin']
+    tx_cache = {}
     
     for i in xrange(0, len(inputs)):
       input = inputs[i]
@@ -345,7 +298,14 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
       tx_hash = input['txid']
       tx_output_index = input['vout']
       
-      tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
+      tx_fut = None 
+      if tx_hash in tx_cache.keys():
+         tx_fut = tx_cache[ tx_hash ]
+      
+      else:
+         tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
+         tx_cache[ tx_hash ] = tx_fut
+      
       tx_futs.append( (i, tx_fut, tx_output_index) )
     
     return tx_futs 
@@ -482,7 +442,8 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             return nulldata_txs
          
          tx_hashes = block_data['tx']
-
+         tx_cache = {}
+         
          log.debug("Get %s transactions from block %d" % (len(tx_hashes), block_number))
          
          # can get transactions asynchronously with a workpool
@@ -492,9 +453,17 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             for j in xrange(0, len(tx_hashes)):
                
                tx_hash = tx_hashes[j]
+               tx_fut = None 
                
-               # dispatch all transaction queries for this block
-               tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
+               if tx_hash in tx_cache.keys():
+                  
+                  tx_fut = tx_cache[ tx_hash ]
+               else:
+                  
+                  # dispatch all transaction queries for this block
+                  tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
+                  tx_cache[ tx_hash ] = tx_fut
+                  
                tx_futures.append( (block_number, j, block_hash, tx_fut) )
             
          else:
@@ -655,35 +624,3 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       
    return nulldata_txs
 
-
-def get_nulldata_txs_in_block(bitcoind, block_number ):
-    """
-    Get all of the transactions with OP_RETURN nulldata from a particular block
-    (i.e. all transactions that could have operation for us to parse).
-    In particular, find out for each such transaction the set of senders, the nulldata,
-    and the total amount of money sent for it.
-    
-    Return a list of transactions
-    """
-    
-    nulldata_txs = []
-
-    block_hash = getblockhash( bitcoind, block_number )
-    block_data = getblock( bitcoind, block_hash )
-
-    if 'tx' not in block_data:
-      return nulldata_txs
-
-    tx_hashes = block_data['tx']
-    
-    log.debug("Get %s transactions from block %d" % (len(tx_hashes), block_number))
-    
-    # have to get them all synchronously
-    for tx_hash in tx_hashes:
-      tx = get_tx(bitcoind, tx_hash)
-      if tx and has_nulldata(tx):
-         nulldata_tx = process_nulldata_tx(bitcoind, tx)
-         if nulldata_tx:
-            nulldata_txs.append(nulldata_tx)
-            
-    return nulldata_txs
