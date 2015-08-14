@@ -68,7 +68,7 @@ class StateEngine( object ):
     the state engine would have a database represents the current state of names and storage at block N.
     
     Because the underlying cryptocurrency blockchain can fork, state engine peers need to 
-    determine that they are on the smae fork so they will know which virtual chain operations 
+    determine that they are on the same fork so they will know which virtual chain operations 
     to process.  To do so, the state engine calculates a Merkle tree over its 
     current state (i.e. the set of names) at the current block, and encodes the root
     hash in each operation.  Then, one peer can tell that the other peer's operations
@@ -141,6 +141,12 @@ class StateEngine( object ):
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
         
+        # if we crashed during a commit, try to finish
+        rc = self.commit()
+        if not rc:
+           log.error("Failed to commit partial data.  Rolling back.")
+           self.rollback()
+        
         # attempt to load the snapshots 
         if os.path.exists( consensus_snapshots_filename ):
            try:
@@ -153,8 +159,8 @@ class StateEngine( object ):
                      self.consensus_hashes = db_dict['snapshots']
                  
            except Exception, e:
-              log.exception(e)
-              pass
+              log.error("Failed to read consensus snapshots at '%s'" % consensus_snapshots_filename )
+              raise e
              
         # what was the last block processed?
         if os.path.exists( lastblock_filename ):
@@ -164,42 +170,74 @@ class StateEngine( object ):
                  self.lastblock = int(lastblock_str)
               
            except Exception, e:
-              log.exception(e)
-              pass 
-        
-             
-    def save_snapshots(self, filename):
+              log.error("Failed to read last block number at '%s'" % lastblock_filename )
+              raise e
+          
+          
+    def rollback( self ):
         """
-        Save the set of consensus hashes to disk, so 
-        we don't have to go built them up again from 
-        the blockchain.
-        
-        Return True on success, False if not
+        Roll back a pending write: blow away temporary files.
         """
-        tmp_filename = filename + ".tmp"
-        try:
-           with open(tmp_filename, 'w') as f:
-               db_dict = {
-                  'snapshots': self.consensus_hashes
-               }
-               f.write(json.dumps(db_dict))
+        
+        tmp_db_filename = config.get_db_filename() + ".tmp"
+        tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
+        tmp_lastblock_filename = config.get_lastblock_filename() + ".tmp"
+        
+        for f in [tmp_db_filename, tmp_snapshot_filename, tmp_lastblock_filename]:
+            if os.path.exists( f ):
+                
+                try:
+                    os.unlink( f )
+                except:
+                    log.error("Failed to unlink '%s'" % f )
+                    pass
+    
+    
+    def commit( self ):
+        """
+        Move all written but uncommitted data into place.
+        Return True on success 
+        Return False on error (in which case the caller should rollback())
+        
+        It is safe to call this method repeatedly until it returns True.
+        """
+        tmp_db_filename = config.get_db_filename() + ".tmp"
+        tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
+        tmp_lastblock_filename = config.get_lastblock_filename() + ".tmp"
+        
+        if not os.path.exists( tmp_lastblock_filename ) and (os.path.exists(tmp_db_filename) or os.path.exists(tmp_snapshot_filename)):
+            # we did not successfully stage the write.
+            # rollback 
+            log.error("Partial write detected.  Not committing.")
+            return False
+            
+        
+        for tmp_filename, filename in zip( [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
+                                           [config.get_lastblock_filename(), config.get_snapshots_filename(), config.get_db_filename()] ):
                
-        except Exception, e:
-           traceback.print_exc()
-           return False
-         
-         
-        try:
-           os.rename( tmp_filename, filename )
-        except Exception, e:
-           traceback.print_exc()
-           try:
-              os.unlink( tmp_filename )
-           except:
-              pass 
+            if not os.path.exists( tmp_filename ):
+                continue 
+            
+            # commit our new lastblock, consensus hash set, and state engine data
+            try:
+               
+               # NOTE: rename fails on Windows if the destination exists 
+               if sys.platform == 'win32' and os.path.exists( filename ):
+                  
+                  try:
+                     os.unlink( filename )
+                  except:
+                     pass
+               
+               os.rename( tmp_filename, filename )
+                  
+            except Exception, e:
+               
+               log.exception(e)
+               return False 
            
         return True
-    
+        
     
     def save( self, block_id ):
         """
@@ -215,6 +253,7 @@ class StateEngine( object ):
         if block_id < self.lastblock:
            raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
         
+        # stage data to temporary files
         tmp_db_filename = config.get_db_filename() + ".tmp"
         tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
         tmp_lastblock_filename = config.get_lastblock_filename() + ".tmp"
@@ -224,54 +263,42 @@ class StateEngine( object ):
                'snapshots': self.consensus_hashes
             }
             f.write(json.dumps(db_dict))
-         
+            f.flush()
+        
+        # put this last...
         with open(tmp_lastblock_filename, "w") as lastblock_f:
             lastblock_f.write("%s" % block_id)
+            lastblock_f.flush()
         
         
         rc = self.impl.db_save( block_id, tmp_db_filename, db_state=self.state )
         if not rc:
            # failed to save 
            log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
-           os.unlink( tmp_lastblock_filename )
-           os.unlink( tmp_snapshot_filename )
+           
+           try:
+               os.unlink( tmp_lastblock_filename )
+           except:
+               pass 
+           
+           try:
+               os.unlink( tmp_snapshot_filename )
+           except:
+               pass 
+           
            return False
         
-        for tmp_filename, filename in zip( [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
-                                           [config.get_lastblock_filename(), config.get_snapshots_filename(), config.get_db_filename()] ):
-               
-            # commit our new lastblock, consensus hash set, and state engine data
-            try:
-               # NOTE: rename fails on Windows if the destination exists 
-               if sys.platform == 'win32':
-                  try:
-                     os.unlink( filename )
-                  except:
-                     pass
-               
-               os.rename( tmp_filename, filename )
-            except Exception, e:
-               
-               log.exception(e)
-               
-               for path in [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename]:
-                  try:
-                     os.unlink( path )
-                  except:
-                     pass 
-                  
-               return False 
+        rc = self.commit()
+        if not rc:
+            log.error("Failed to commit data at block %s.  Rolling back." % block_id )
+            
+            self.rollback()
+            return False 
         
-        # clean up 
-        for tmp_file in [tmp_lastblock_filename, tmp_snapshot_filename]:
-           try:
-              os.unlink( tmp_file )
-           except:
-              pass
-           
-        self.lastblock = block_id
-        return True
-     
+        else:
+            self.lastblock = block_id
+            return True
+    
     
     def calculate_consensus_hash( self, merkle_root ):
       """
@@ -305,6 +332,13 @@ class StateEngine( object ):
       
       return consensus_hash
    
+   
+    def force_opcode( self, op, opcode ):
+      """
+      Set an op's opcode, so virtualchain will accept it as such.
+      """
+      op['virtualchain_opcode'] = opcode
+       
    
     def parse_transaction( self, block_id, tx ):
       """
