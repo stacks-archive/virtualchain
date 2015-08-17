@@ -48,6 +48,8 @@ from .blockchain import transactions, session
 from multiprocessing import Pool
 from ..impl_ref import reference            # default no-op state engine implementation
 
+from utilitybelt import is_hex
+
 log = session.log
 
 class StateEngine( object ):
@@ -363,7 +365,19 @@ class StateEngine( object ):
       senders = tx['senders']
       fee = tx['fee']
       
-      op_return_bin = binascii.unhexlify( op_return_hex )
+      if not is_hex(op_return_hex):
+          # not a valid hex string 
+          return None
+      
+      if len(op_return_hex) % 2 != 0:
+          # not valid hex string 
+          return None
+      
+      try:
+          op_return_bin = binascii.unhexlify( op_return_hex )
+      except Exception, e:
+          log.error("Failed to parse transaction: %s" % tx)
+          raise e
       
       if not op_return_bin.startswith( self.magic_bytes ):
          return None
