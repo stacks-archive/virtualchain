@@ -36,7 +36,7 @@ IMPL = None             # class, package, or instance that implements the virtua
 
 RPC_TIMEOUT = 5  # seconds 
 
-MULTIPROCESS_RPC_RETRY = 3
+MULTIPROCESS_RPC_RETRY = 10
 
 REINDEX_FREQUENCY = 10  # in seconds
 
