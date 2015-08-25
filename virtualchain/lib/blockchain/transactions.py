@@ -31,6 +31,7 @@ import logging
 import os
 import time
 import types
+import random
 
 from bitcoinrpc.authproxy import JSONRPCException
 
@@ -179,6 +180,7 @@ def getblock( bitcoind_or_opts, block_hash ):
    
    exc_to_raise = None
    bitcoind = get_bitcoind( bitcoind_or_opts )
+   attempts = 0
    
    for i in xrange(0, MULTIPROCESS_RPC_RETRY):
       
@@ -188,11 +190,28 @@ def getblock( bitcoind_or_opts, block_hash ):
       except JSONRPCException, je:
          log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
          exc_to_raise = je
+     
+         attempts += 1
+         
+         # probably a transient bitcoind failure
+         # exponential backof with jitter
+         time.sleep(2**attempts + random.randint( 0, 2**(attempts - 1)) )
+         
+         new_opts = get_bitcoind_opts( bitcoind_or_opts )
+         bitcoind = multiprocess_bitcoind( new_opts, reset=True)
          continue
+     
       except Exception, e:
          log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
          log.exception(e)
          exc_to_raise = e
+     
+         attempts += 1
+         
+         # probably a transient network failure
+         # exponential backoff with jitter
+         time.sleep(2**attempts + random.randint( 0, 2**(attempts - 1)) )
+         
          new_opts = get_bitcoind_opts( bitcoind_or_opts )
          bitcoind = multiprocess_bitcoind( new_opts, reset=True)
          continue
