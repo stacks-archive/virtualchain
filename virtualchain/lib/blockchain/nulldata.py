@@ -21,6 +21,8 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import sys 
+import pybitcoin
 
 def get_nulldata(tx):
     if not ('vout' in tx):
@@ -42,9 +44,20 @@ def get_nulldata(tx):
         script_parts = str(script_pubkey.get('asm')).split(' ')
         script_type = str(script_pubkey.get('type'))
         
-        # if we're looking at a nulldata tx, get the nulldata
+        # get the nulldata from the OP_RETURN
         if script_type == 'nulldata' and len(script_parts) == 2:
-            return script_parts[1]
+            
+            # make *sure* this is hex (since small OP_RETURNs get turned 
+            # into numbers)
+            raw_opcode = script_pubkey.get('hex')[:2]
+            
+            hex_str = script_parts[1]
+            if hex_str != script_pubkey.get('hex')[4:] and ("0x" + str(raw_opcode) == hex(pybitcoin.transactions.opcodes.OP_RETURN)):
+                
+                # get the raw hex, and remove the leading OP_RETURN code and OP_PUSHDATA op
+                hex_str = script_pubkey.get('hex')[4:]
+                
+            return hex_str
         
     return None
 
