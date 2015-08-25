@@ -376,7 +376,7 @@ class StateEngine( object ):
       try:
           op_return_bin = binascii.unhexlify( op_return_hex )
       except Exception, e:
-          log.error("Failed to parse transaction: %s" % tx)
+          log.error("Failed to parse transaction: %s (OP_RETURN = %s)" % (tx, op_return_hex))
           raise e
       
       if not op_return_bin.startswith( self.magic_bytes ):
@@ -534,6 +534,7 @@ class StateEngine( object ):
        
        Return True on success 
        Return False on error
+       Raise an exception on irrecoverable error--the caller should simply try again.
        """
        
        first_block_id = self.lastblock 
@@ -623,6 +624,7 @@ def get_index_range( bitcoind ):
        current_block = int(bitcoind.getblockcount())
         
     except Exception, e:
+       # TODO: reconnect on connection error
        log.exception(e)
        return None
 
