@@ -539,37 +539,48 @@ class StateEngine( object ):
        
        first_block_id = self.lastblock 
        num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
-
+    
+       rc = True
        pool = Pool( processes=num_workers )
        
-       for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
+       try:
           
-          block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
-          
-          # returns: [(block_id, txs)]
-          block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( pool, bitcoind_opts, block_ids )
-          
-          # process in order by block ID
-          block_ids_and_txs.sort()
-          
-          log.info("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
-             
-          for processed_block_id, txs in block_ids_and_txs:
-             
-             consensus_hash = self.process_block( processed_block_id, txs )
-             
-             log.info("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )) )
-             
-             if consensus_hash is None:
+          for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
+              
+              if not rc:
+                  break 
+              
+              block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
                 
-                # fatal error 
-                log.error("Failed to process block %d" % processed_block_id )
-                return False 
+              # returns: [(block_id, txs)]
+              block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( pool, bitcoind_opts, block_ids )
+                
+              # process in order by block ID
+              block_ids_and_txs.sort()
+                
+              log.info("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
+                    
+              for processed_block_id, txs in block_ids_and_txs:
+                    
+                  consensus_hash = self.process_block( processed_block_id, txs )
+                    
+                  log.info("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )) )
+                    
+                  if consensus_hash is None:
+                        
+                      # fatal error 
+                      rc = False
+                      log.error("Failed to process block %d" % processed_block_id )
+                      break
        
+       except:
+           pool.close()
+           pool.join()
+           raise
        
        pool.close()
        pool.join()
-       return True
+       return rc
        
        
     def get_consensus_at( self, block_id ):
