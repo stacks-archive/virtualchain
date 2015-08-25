@@ -30,6 +30,8 @@ import json
 import datetime
 import traceback
 import time
+import random
+import errno
 
 from ConfigParser import SafeConfigParser
 
@@ -77,9 +79,21 @@ def sync_virtualchain( bitcoind_opts, last_block, state_engine ):
     """
     
     start = datetime.datetime.now()
+    attempts = 1
     
-    # advance state 
-    state_engine.build( bitcoind_opts, last_block+1 )
+    while True:
+        try:
+                
+            # advance state 
+            state_engine.build( bitcoind_opts, last_block+1 )
+            break 
+        
+        except Exception, e:
+            # probably offline; exponential back-off
+            attempts += 1
+            time.sleep( min( 300, 2**(attempts) + random.randint( 0, 2**(attempts-1) ) ) )
+            continue
+            
     
     time_taken = "%s seconds" % (datetime.datetime.now() - start).seconds
     log.info(time_taken)
