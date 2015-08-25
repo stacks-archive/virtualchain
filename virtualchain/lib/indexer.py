@@ -626,7 +626,7 @@ def get_index_range( bitcoind ):
     except Exception, e:
        # TODO: reconnect on connection error
        log.exception(e)
-       return None
+       return None, None
 
     # check our last known file
     lastblock_file = config.get_lastblock_filename()
