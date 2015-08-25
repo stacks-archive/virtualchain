@@ -90,6 +90,7 @@ def sync_virtualchain( bitcoind_opts, last_block, state_engine ):
         
         except Exception, e:
             # probably offline; exponential back-off
+            log.exception(e)
             attempts += 1
             time.sleep( min( 300, 2**(attempts) + random.randint( 0, 2**(attempts-1) ) ) )
             continue
