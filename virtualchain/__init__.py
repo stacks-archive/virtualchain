@@ -22,7 +22,7 @@
 """
 
 
-__version__ = '0.1.0'
+__version__ = '0.0.1'
 
 from .lib import *
 from virtualchain import setup_virtualchain, run_virtualchain, stop_virtualchain, sync_virtualchain
