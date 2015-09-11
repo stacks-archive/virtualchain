@@ -361,6 +361,7 @@ class StateEngine( object ):
       """
       
       op_return_hex = tx['nulldata']
+      inputs = tx['vin']
       outputs = tx['vout']
       senders = tx['senders']
       fee = tx['fee']
@@ -390,7 +391,7 @@ class StateEngine( object ):
       # looks like a valid op.  Try to parse it.
       op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
       
-      op = self.impl.db_parse( block_id, op_code, op_payload, senders, outputs, fee, db_state=self.state )
+      op = self.impl.db_parse( block_id, op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state )
       
       if op is None:
          # not valid 

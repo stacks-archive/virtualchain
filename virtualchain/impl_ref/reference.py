@@ -81,7 +81,7 @@ def get_op_processing_order():
    return None 
 
 
-def db_parse( block_id, opcode, op_payload, senders, outputs, fee, db_state=None ):
+def db_parse( block_id, opcode, op_payload, senders, inputs, outputs, fee, db_state=None ):
    """
    Given the block ID, and information from what looks like 
    an OP_RETURN transaction that is part of the virtual chain, parse the 
