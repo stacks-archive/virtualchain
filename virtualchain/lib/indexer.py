@@ -241,7 +241,7 @@ class StateEngine( object ):
         return True
         
     
-    def save( self, block_id ):
+    def save( self, block_id, save_db=True ):
         """
         Write out all state to the working directory.
         Calls the implementation's 'db_save' method.
@@ -272,23 +272,23 @@ class StateEngine( object ):
             lastblock_f.write("%s" % block_id)
             lastblock_f.flush()
         
-        
-        rc = self.impl.db_save( block_id, tmp_db_filename, db_state=self.state )
-        if not rc:
-           # failed to save 
-           log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
-           
-           try:
-               os.unlink( tmp_lastblock_filename )
-           except:
-               pass 
-           
-           try:
-               os.unlink( tmp_snapshot_filename )
-           except:
-               pass 
-           
-           return False
+        if save_db:
+            rc = self.impl.db_save( block_id, tmp_db_filename, db_state=self.state )
+            if not rc:
+                # failed to save 
+                log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
+                
+                try:
+                    os.unlink( tmp_lastblock_filename )
+                except:
+                    pass 
+                
+                try:
+                    os.unlink( tmp_snapshot_filename )
+                except:
+                    pass 
+                
+                return False
         
         rc = self.commit()
         if not rc:
@@ -316,6 +316,7 @@ class StateEngine( object ):
       that can be used to generate the *ordered* list of records that make up the state.
       """
       
+      log.debug("Snapshotting at block %s" % block_id )
       hashes = []
       for serialized_record in self.impl.db_iterable( block_id, db_state=self.state ):
          
@@ -480,7 +481,14 @@ class StateEngine( object ):
        
        This method calls the implementation's 'db_commit' method to 
        add parsed and checked opcodes.
+       
+       Return True if the state of the system has changed as a result 
+       of the commits.
+       
+       Return False if not
        """
+       
+       have_changed = False 
        
        op_order = self.op_order
        if op_order is None:
@@ -493,7 +501,16 @@ class StateEngine( object ):
              
              op_sanitized, op_reserved = self.remove_reserved_keys( op )
              
-             self.impl.db_commit( block_id, opcode, op_sanitized, db_state=self.state )
+             rc = self.impl.db_commit( block_id, opcode, op_sanitized, db_state=self.state )
+             if rc:
+                 have_changed = True
+       
+       # final commit 
+       rc = self.impl.db_commit( block_id, None, None, db_state=self.state )
+       if rc:
+           have_changed = True 
+           
+       return have_changed
        
     
     def process_block( self, block_id, txs ):
@@ -510,15 +527,29 @@ class StateEngine( object ):
        
        ops = self.parse_block( block_id, txs )
        pending_ops = self.log_pending_ops( block_id, ops )
-       self.commit_pending_ops( block_id, pending_ops )
        
-       consensus_hash = self.snapshot( block_id )
+       consensus_hash = None
        
-       rc = self.save( block_id )
-       if not rc:
-          log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
-          return None 
+       have_changed = self.commit_pending_ops( block_id, pending_ops )
        
+       if have_changed:
+           
+           log.info("State engine has changed at block %s" % block_id)
+           consensus_hash = self.snapshot( block_id )
+           
+           rc = self.save( block_id )
+           if not rc:
+              log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
+              return None 
+        
+       else:
+           # no change since last block
+           log.info("State engine has not changed at block %s" % block_id)
+           consensus_hash = self.get_consensus_at( block_id - 1 )
+           if consensus_hash is None:
+               log.warning("No consensus hash at block %s" % (block_id - 1 ))
+               consensus_hash = self.snapshot( block_id )
+               
        return consensus_hash
 
 
@@ -537,6 +568,10 @@ class StateEngine( object ):
        Return False on error
        Raise an exception on irrecoverable error--the caller should simply try again.
        """
+       
+       # make sure we have a consensus hash for the last block ID we know 
+       if self.get_consensus_at( self.lastblock-1 ) is None:
+           self.snapshot( self.lastblock-1 )
        
        first_block_id = self.lastblock 
        num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
@@ -573,7 +608,7 @@ class StateEngine( object ):
                       rc = False
                       log.error("Failed to process block %d" % processed_block_id )
                       break
-       
+                  
        except:
            pool.close()
            pool.join()
