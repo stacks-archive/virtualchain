@@ -94,10 +94,11 @@ class StateEngine( object ):
        'virtualchain_outputs',
        'virtualchain_senders',
        'virtualchain_fee',
-       'virtualchain_block_number'
+       'virtualchain_block_number',
+       'virutalchain_accepted'
     ]
     
-    def __init__(self, magic_bytes, opcodes, impl=None, state=None, op_order=None ):
+    def __init__(self, magic_bytes, opcodes, impl=None, state=None, op_order=None, initial_snapshots={} ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -131,7 +132,7 @@ class StateEngine( object ):
         processed, by passing a list of opcodes in op_order.
         """
         
-        self.consensus_hashes = {}
+        self.consensus_hashes = initial_snapshots
         self.pending_ops = defaultdict(list)
         self.magic_bytes = magic_bytes 
         self.opcodes = opcodes
@@ -139,6 +140,7 @@ class StateEngine( object ):
         self.op_order = op_order
         self.impl = impl
         self.lastblock = self.impl.get_first_block_id()
+        self.pool = None
         
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
@@ -175,6 +177,9 @@ class StateEngine( object ):
               log.error("Failed to read last block number at '%s'" % lastblock_filename )
               raise e
           
+        if len(self.consensus_hashes) < 20:
+            print "consensus hashes:\n%s" % json.dumps( self.consensus_hashes, indent=4 )
+            
           
     def rollback( self ):
         """
@@ -241,7 +246,7 @@ class StateEngine( object ):
         return True
         
     
-    def save( self, block_id, save_db=True ):
+    def save( self, block_id, consensus_hash, pending_ops ):
         """
         Write out all state to the working directory.
         Calls the implementation's 'db_save' method.
@@ -271,24 +276,23 @@ class StateEngine( object ):
         with open(tmp_lastblock_filename, "w") as lastblock_f:
             lastblock_f.write("%s" % block_id)
             lastblock_f.flush()
-        
-        if save_db:
-            rc = self.impl.db_save( block_id, tmp_db_filename, db_state=self.state )
-            if not rc:
-                # failed to save 
-                log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
-                
-                try:
-                    os.unlink( tmp_lastblock_filename )
-                except:
-                    pass 
-                
-                try:
-                    os.unlink( tmp_snapshot_filename )
-                except:
-                    pass 
-                
-                return False
+
+        rc = self.impl.db_save( block_id, consensus_hash, pending_ops, tmp_db_filename, db_state=self.state )
+        if not rc:
+            # failed to save 
+            log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
+            
+            try:
+                os.unlink( tmp_lastblock_filename )
+            except:
+                pass 
+            
+            try:
+                os.unlink( tmp_snapshot_filename )
+            except:
+                pass 
+            
+            return False
         
         rc = self.commit()
         if not rc:
@@ -303,359 +307,388 @@ class StateEngine( object ):
     
     
     def calculate_consensus_hash( self, merkle_root ):
-      """
-      Given the Merkle root of the set of records processed, calculate the consensus hash.
-      """
-      return binascii.hexlify( pybitcoin.hash.bin_hash160(merkle_root, True)[0:16])
- 
+        """
+        Given the Merkle root of the set of records processed, calculate the consensus hash.
+        """
+        return binascii.hexlify( pybitcoin.hash.bin_hash160(merkle_root, True)[0:16])
+
     
-    def snapshot( self, block_id ):
-      """
-      Take the consensus hash of the current state at the current block.
-      Pass in an iterable (i.e. a list, or something that can stream data off of disk)
-      that can be used to generate the *ordered* list of records that make up the state.
-      """
-      
-      log.debug("Snapshotting at block %s" % block_id )
-      hashes = []
-      for serialized_record in self.impl.db_iterable( block_id, db_state=self.state ):
-         
-         record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
-         hashes.append( record_hash )
-      
-      if len(hashes) == 0:
-         
-         hashes.append( binascii.hexlify( pybitcoin.hash.bin_double_sha256( "" ) ) )
-         
-      merkle_tree = pybitcoin.MerkleTree( hashes )
-      root_hash = merkle_tree.root()
-      
-      consensus_hash = self.calculate_consensus_hash( root_hash )
-      self.consensus_hashes[ str(block_id) ] = consensus_hash 
-      
-      return consensus_hash
+    def snapshot( self, block_id, pending_ops ):
+        """
+        Given the currnet block ID and the set of operations committed,
+        find the consensus hash that represents the state of the virtual chain.
+        """
+        
+        log.debug("Snapshotting block %s" % (block_id) )
+        
+        previous_consensus_hash = self.get_consensus_at( block_id - 1 )
+        if previous_consensus_hash is None:
+            # NULL consensus hash 
+            previous_consensus_hash = pybitcoin.hash.bin_double_sha256( "" )
+            
+        # serialize each operation 
+        hashes = []
+        
+        for (op, nameops) in pending_ops.items():
+            for nameop in nameops:
+                
+                # skip rejected 
+                if not nameop['virtualchain_accepted']:
+                    continue 
+                
+                serialized_record = self.impl.db_serialize( op, nameop, db_state=self.state )
+                record_hash = pybitcoin.hash.bin_double_sha256( serialized_record )
+                hashes.append( record_hash )
+        
+        # include the previous merkel root 
+        hashes.append( previous_consensus_hash )
+            
+        merkle_tree = pybitcoin.MerkleTree( hashes, hex_format=False )
+        root_hash = merkle_tree.root()
+        
+        consensus_hash = self.calculate_consensus_hash( root_hash )
+        self.consensus_hashes[ str(block_id) ] = consensus_hash 
+        
+        return consensus_hash
    
-   
-    def force_opcode( self, op, opcode ):
-      """
-      Set an op's opcode, so virtualchain will accept it as such.
-      """
-      op['virtualchain_opcode'] = opcode
-       
    
     def parse_transaction( self, block_id, tx ):
-      """
-      Given a block ID and an OP_RETURN transaction, 
-      try to parse it into a virtual chain operation.
-      
-      Use the implementation's 'db_parse' method to do so.
-      
-      Set the following fields in op:
-      * virtualchain_opcode:   the operation code 
-      * virtualchain_outputs:  the list of transaction outputs
-      * virtualchain_senders:  the list of transaction senders 
-      * virtualchain_fee:      the total amount of money sent
-      * virtualchain_block_number:  the block ID in which this transaction occurred
-      
-      Return a dict representing the data on success.
-      Return None on error
-      """
-      
-      op_return_hex = tx['nulldata']
-      inputs = tx['vin']
-      outputs = tx['vout']
-      senders = tx['senders']
-      fee = tx['fee']
-      
-      if not is_hex(op_return_hex):
-          # not a valid hex string 
-          return None
-      
-      if len(op_return_hex) % 2 != 0:
-          # not valid hex string 
-          return None
-      
-      try:
-          op_return_bin = binascii.unhexlify( op_return_hex )
-      except Exception, e:
-          log.error("Failed to parse transaction: %s (OP_RETURN = %s)" % (tx, op_return_hex))
-          raise e
-      
-      if not op_return_bin.startswith( self.magic_bytes ):
-         return None
-      
-      op_code = op_return_bin[ len(self.magic_bytes) ]
-      
-      if op_code not in self.opcodes:
-         return None 
-      
-      # looks like a valid op.  Try to parse it.
-      op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
-      
-      op = self.impl.db_parse( block_id, op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state )
-      
-      if op is None:
-         # not valid 
-         return None 
-      
-      # store it
-      op['virtualchain_opcode'] = op_code
-      op['virtualchain_outputs'] = outputs 
-      op['virtualchain_senders'] = senders 
-      op['virtualchain_fee'] = fee
-      op['virtualchain_block_number'] = block_id
-      
-      return op
+        """
+        Given a block ID and an OP_RETURN transaction, 
+        try to parse it into a virtual chain operation.
+        
+        Use the implementation's 'db_parse' method to do so.
+        
+        Set the following fields in op:
+        * virtualchain_opcode:   the operation code 
+        * virtualchain_outputs:  the list of transaction outputs
+        * virtualchain_senders:  the list of transaction senders 
+        * virtualchain_fee:      the total amount of money sent
+        * virtualchain_block_number:  the block ID in which this transaction occurred
+        
+        Return a dict representing the data on success.
+        Return None on error
+        """
+        
+        op_return_hex = tx['nulldata']
+        inputs = tx['vin']
+        outputs = tx['vout']
+        senders = tx['senders']
+        fee = tx['fee']
+        
+        if not is_hex(op_return_hex):
+            # not a valid hex string 
+            return None
+        
+        if len(op_return_hex) % 2 != 0:
+            # not valid hex string 
+            return None
+        
+        try:
+            op_return_bin = binascii.unhexlify( op_return_hex )
+        except Exception, e:
+            log.error("Failed to parse transaction: %s (OP_RETURN = %s)" % (tx, op_return_hex))
+            raise e
+        
+        if not op_return_bin.startswith( self.magic_bytes ):
+            return None
+        
+        op_code = op_return_bin[ len(self.magic_bytes) ]
+        
+        if op_code not in self.opcodes:
+            return None 
+        
+        # looks like a valid op.  Try to parse it.
+        op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
+        
+        op = self.impl.db_parse( block_id, op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state )
+        
+        if op is None:
+            # not valid 
+            return None 
+        
+        # store it
+        op['virtualchain_opcode'] = op_code
+        op['virtualchain_outputs'] = outputs 
+        op['virtualchain_senders'] = senders 
+        op['virtualchain_fee'] = fee
+        op['virtualchain_block_number'] = block_id
+        op['virtualchain_accepted'] = False       # not yet accepted
+        
+        return op
    
    
     def parse_block( self, block_id, txs ):
-      """
-      Given the sequence of transactions in a block, turn them into a
-      sequence of virtual chain operations.
-      """
-      
-      ops = []
-      
-      for i in xrange(0,len(txs)):
-         
-         tx = txs[i]
-         
-         op = self.parse_transaction( block_id, tx )
-         
-         if op is not None:
-            ops.append( op )
+        """
+        Given the sequence of transactions in a block, turn them into a
+        sequence of virtual chain operations.
+        """
+        
+        ops = []
+        
+        for i in xrange(0,len(txs)):
             
-      return ops
+            tx = txs[i]
+            
+            op = self.parse_transaction( block_id, tx )
+            
+            if op is not None:
+                ops.append( op )
+            
+        return ops
    
    
     def remove_reserved_keys( self, op ):
-       """
-       Remove reserved keywords from an op dict,
-       which can then safely be passed into the db.
-       
-       Returns a new op dict, and the reserved fields
-       """
-       sanitized = {}
-       reserved = {}
-       
-       for k in op.keys():
-          if k not in self.RESERVED_KEYS:
-             sanitized[k] = op[k]
-          else:
-             reserved[k] = op[k]
-             
-       return sanitized, reserved
+        """
+        Remove reserved keywords from an op dict,
+        which can then safely be passed into the db.
+        
+        Returns a new op dict, and the reserved fields
+        """
+        sanitized = {}
+        reserved = {}
+        
+        for k in op.keys():
+            if k not in self.RESERVED_KEYS:
+                sanitized[k] = op[k]
+            else:
+                reserved[k] = op[k]
+                
+        return sanitized, reserved
           
     
     def log_pending_ops( self, block_id, ops ):
-       """
-       Given a sequence of parsed operations, stage them 
-       in preparation for adding them to the state engine.
-       This calls the 'db_check' operation in the implementation,
-       to verify whether or not the operation should be 
-       staged or not.
-       
-       Return a dict of a sequence of pending ops, grouped by opcode,
-       and ordered simply by the order in which they appeared in ops.
-       """
-       
-       pending_ops = defaultdict(list)
-       
-       for op in ops:
-          
-          op_sanitized, reserved = self.remove_reserved_keys( op )
-          
-          rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op_sanitized, db_state=self.state )
-          if rc:
-            # good to go 
-            op_sanitized.update( reserved )
-            pending_ops[ op_sanitized['virtualchain_opcode'] ].append( op_sanitized )
-          
-       return pending_ops
+        """
+        Given a sequence of parsed operations, stage them 
+        in preparation for adding them to the state engine.
+        This calls the 'db_check' operation in the implementation,
+        to verify whether or not the operation should be 
+        staged or not.
+        
+        Return a dict of a sequence of pending ops, grouped by opcode,
+        and ordered simply by the order in which they appeared in ops.
+        """
+        
+        pending_ops = defaultdict(list)
+        
+        for op in ops:
+            
+            op_sanitized, reserved = self.remove_reserved_keys( op )
+            
+            rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op_sanitized, db_state=self.state )
+            if rc:
+                # good to go 
+                op_sanitized.update( reserved )
+                op_sanitized['virtualchain_accepted'] = True
+                
+                pending_ops[ op_sanitized['virtualchain_opcode'] ].append( op_sanitized )
+            
+            else:
+                op_sanitized['virtualchain_accepted'] = False 
+            
+        return pending_ops
     
 
     def commit_pending_ops( self, block_id, pending_ops ):
-       """
-       Given the logged set of pending operations for this block,
-       merge them into the implementation's state.
+        """
+        Given the logged set of pending operations for this block,
+        merge them into the implementation's state.
+        
+        This method calls the implementation's 'db_commit' method to 
+        add parsed and checked opcodes.
+        """
+        
+        op_order = self.op_order
+        if op_order is None:
+            op_order = pending_ops.keys()
+        
+        for opcode in op_order:
+            
+            op_list = pending_ops[ opcode ]
+            for op in op_list:
+                
+                op_sanitized, op_reserved = self.remove_reserved_keys( op )
+                
+                self.impl.db_commit( block_id, opcode, op_sanitized, db_state=self.state )
+        
+        # final commit 
+        self.impl.db_commit( block_id, None, None, db_state=self.state )
        
-       This method calls the implementation's 'db_commit' method to 
-       add parsed and checked opcodes.
-       
-       Return True if the state of the system has changed as a result 
-       of the commits.
-       
-       Return False if not
-       """
-       
-       have_changed = False 
-       
-       op_order = self.op_order
-       if op_order is None:
-          op_order = pending_ops.keys()
-       
-       for opcode in op_order:
-          
-          op_list = pending_ops[ opcode ]
-          for op in op_list:
-             
-             op_sanitized, op_reserved = self.remove_reserved_keys( op )
-             
-             rc = self.impl.db_commit( block_id, opcode, op_sanitized, db_state=self.state )
-             if rc:
-                 have_changed = True
-       
-       # final commit 
-       rc = self.impl.db_commit( block_id, None, None, db_state=self.state )
-       if rc:
-           have_changed = True 
-           
-       return have_changed
        
     
     def process_block( self, block_id, txs ):
-       """
-       Top-level block processing method.
-       Feed the block and its OP_RETURN transactions 
-       through the implementation, to build up the 
-       implementation's state.  Cache the 
-       resulting data to disk.
-       
-       Return the consensus hash for this block.
-       Return None on error
-       """
-       
-       ops = self.parse_block( block_id, txs )
-       pending_ops = self.log_pending_ops( block_id, ops )
-       
-       consensus_hash = None
-       
-       have_changed = self.commit_pending_ops( block_id, pending_ops )
-       
-       if have_changed:
-           
-           log.info("State engine has changed at block %s" % block_id)
-           consensus_hash = self.snapshot( block_id )
-           
-           rc = self.save( block_id )
-           if not rc:
-              log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
-              return None 
+        """
+        Top-level block processing method.
+        Feed the block and its OP_RETURN transactions 
+        through the implementation, to build up the 
+        implementation's state.  Cache the 
+        resulting data to disk.
         
-       else:
-           # no change since last block
-           log.info("State engine has not changed at block %s" % block_id)
-           consensus_hash = self.get_consensus_at( block_id - 1 )
-           if consensus_hash is None:
-               log.warning("No consensus hash at block %s" % (block_id - 1 ))
-               consensus_hash = self.snapshot( block_id )
-               
-       return consensus_hash
+        Return the consensus hash for this block.
+        Return None on error
+        """
+        
+        log.debug("Process block %s (%s txs)" % (block_id, len(txs)))
+        
+        ops = self.parse_block( block_id, txs )
+        pending_ops = self.log_pending_ops( block_id, ops )
+        self.commit_pending_ops( block_id, pending_ops )
+
+        consensus_hash = self.snapshot( block_id, pending_ops )
+        
+        rc = self.save( block_id, consensus_hash, pending_ops )
+        if not rc:
+            log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
+            return None 
+        
+        return consensus_hash
 
 
     def build( self, bitcoind_opts, end_block_id ):
-       """
-       Top-level call to process all blocks in the blockchain.
-       Goes and fetches all OP_RETURN nulldata in order,
-       and feeds them into the state engine implementation using its
-       'db_parse', 'db_check', 'db_commit', and 'db_save'
-       methods.
-       
-       Note that this method can take some time (hours) to complete 
-       when called from the first block.
-       
-       Return True on success 
-       Return False on error
-       Raise an exception on irrecoverable error--the caller should simply try again.
-       """
-       
-       # make sure we have a consensus hash for the last block ID we know 
-       if self.get_consensus_at( self.lastblock-1 ) is None:
-           self.snapshot( self.lastblock-1 )
-       
-       first_block_id = self.lastblock 
-       num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
-    
-       rc = True
-       pool = Pool( processes=num_workers )
-       
-       try:
-          
-          for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
-              
-              if not rc:
-                  break 
-              
-              block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
+        """
+        Top-level call to process all blocks in the blockchain.
+        Goes and fetches all OP_RETURN nulldata in order,
+        and feeds them into the state engine implementation using its
+        'db_parse', 'db_check', 'db_commit', and 'db_save'
+        methods.
+        
+        Note that this method can take some time (hours, days) to complete 
+        when called from the first block.
+        
+        This method is *NOT* thread-safe.  However, it can be interrupted 
+        with the "stop_build" method.
+        
+        Return True on success 
+        Return False on error
+        Raise an exception on irrecoverable error--the caller should simply try again.
+        """
+        
+        first_block_id = self.lastblock 
+        num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
+
+        rc = True
+        self.pool = Pool( processes=num_workers )
+        
+        try:
+            
+            log.debug("Process blocks %s to %s" % (first_block_id, end_block_id) )
+            
+            for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
                 
-              # returns: [(block_id, txs)]
-              block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( pool, bitcoind_opts, block_ids )
+                if not rc:
+                    break 
                 
-              # process in order by block ID
-              block_ids_and_txs.sort()
+                if self.pool is None:
+                    # interrupted 
+                    log.debug("Build interrupted")
+                    rc = False
+                    break 
                 
-              log.info("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
+                block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
+                
+                # returns: [(block_id, txs)]
+                block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( self.pool, bitcoind_opts, block_ids )
+                
+                # process in order by block ID
+                block_ids_and_txs.sort()
+                
+                log.info("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
                     
-              for processed_block_id, txs in block_ids_and_txs:
+                for processed_block_id, txs in block_ids_and_txs:
                     
-                  consensus_hash = self.process_block( processed_block_id, txs )
+                    consensus_hash = self.process_block( processed_block_id, txs )
                     
-                  log.info("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )) )
+                    log.info("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )))
                     
-                  if consensus_hash is None:
+                    if consensus_hash is None:
                         
-                      # fatal error 
-                      rc = False
-                      log.error("Failed to process block %d" % processed_block_id )
-                      break
-                  
-       except:
-           pool.close()
-           pool.join()
-           raise
-       
-       pool.close()
-       pool.join()
-       return rc
-       
+                        # fatal error 
+                        rc = False
+                        log.error("Failed to process block %d" % processed_block_id )
+                        break
+                    
+        except:
+            
+            self.pool.close()
+            self.pool.terminate()
+            self.pool.join()
+            self.pool = None
+            raise
+        
+        self.pool.close()
+        self.pool.terminate()
+        self.pool.join()
+        self.pool = None
+        return rc
+    
+    
+    def stop_build( self ):
+        """
+        Stop an in-progress build() invocation.
+        Call from a separate thread from build()
+        
+        If the build() method is not concurrently running,
+        this method will do nothing.
+        """
+        
+        log.info("Stop building")
+        
+        if self.pool is not None:
+            try:
+                # NOTE: a bit racy--self.pool might be None 
+                self.pool.close()
+                self.pool.terminate()
+                self.pool.join()
+                self.pool = None 
+                
+            except:
+                pass 
+            
+        
        
     def get_consensus_at( self, block_id ):
-       """
-       Get the consensus hash at a given block
-       """
-       return self.consensus_hashes.get( str(block_id), None )
+        """
+        Get the consensus hash at a given block
+        """
+        return self.consensus_hashes.get( str(block_id), None )
+
+
+    def get_valid_consensus_hashes( self, block_id ):
+        """
+        Get the list of valid consensus hashes for a given block.
+        """
+        valid_consensus_hashes = []
+        first_block_to_check = block_id - config.BLOCKS_CONSENSUS_HASH_IS_VALID
+        for block_number in xrange(first_block_to_check, block_id+1):
+            
+            block_number_key = str(block_number)
+            
+            if block_number_key not in self.consensus_hashes.keys():
+                continue
+            
+            valid_consensus_hashes.append( str(self.consensus_hashes[block_number_key]) )
+          
+        return valid_consensus_hashes
     
     
     def get_current_consensus(self):
-       """
-       Get the current consensus hash.
-       """
-       return self.get_consensus_at( str(self.lastblock) )
-    
-    
+        """
+        Get the current consensus hash.
+        """
+        return self.get_consensus_at( str(self.lastblock) )
+
+
     def is_consensus_hash_valid( self, block_id, consensus_hash ):
-       """
-       Given a block ID and a consensus hash, is 
-       the hash still considered to be valid?
-       We allow a grace period for which a consensus hash 
-       is valid, since a writer might submit a 
-       "recently stale" consensus hash under 
-       heavy write load.
-       """
-       
-       # search current and previous blocks
-       first_block_to_check = block_id - config.BLOCKS_CONSENSUS_HASH_IS_VALID
-       for block_number in xrange(first_block_to_check, block_id):
-          
-         block_number_key = str(block_number)
-         
-         if block_number_key not in self.consensus_hashes.keys():
-            continue
-         
-         if str(consensus_hash) == str(self.consensus_hashes[block_number_key]):
-            return True
-         
-       return False
+        """
+        Given a block ID and a consensus hash, is 
+        the hash still considered to be valid?
+        We allow a grace period for which a consensus hash 
+        is valid, since a writer might submit a 
+        "recently stale" consensus hash under 
+        heavy write load.
+        """
+        
+        return str(consensus_hash) in self.get_valid_consensus_hashes( block_id )
       
 
 def get_index_range( bitcoind ):
