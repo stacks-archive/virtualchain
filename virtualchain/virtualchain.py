@@ -83,7 +83,7 @@ def sync_virtualchain( bitcoind_opts, last_block, state_engine ):
     
     while True:
         try:
-                
+            
             # advance state 
             state_engine.build( bitcoind_opts, last_block+1 )
             break 
@@ -100,7 +100,14 @@ def sync_virtualchain( bitcoind_opts, last_block, state_engine ):
     log.info(time_taken)
     
     return 0
- 
+
+
+def stop_sync_virtualchain( state_engine ):
+   """
+   Forcibly stop synchronizing the virtual chain.
+   """
+   state_engine.stop_build()
+   
 
 def stop_virtualchain():
    """
