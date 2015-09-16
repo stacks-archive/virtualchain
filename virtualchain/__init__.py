@@ -25,4 +25,4 @@
 __version__ = '0.0.1'
 
 from .lib import *
-from virtualchain import setup_virtualchain, run_virtualchain, stop_virtualchain, sync_virtualchain
+from virtualchain import setup_virtualchain, run_virtualchain, stop_virtualchain, sync_virtualchain, stop_sync_virtualchain
