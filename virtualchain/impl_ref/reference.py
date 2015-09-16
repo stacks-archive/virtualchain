@@ -132,20 +132,11 @@ def db_save( block_id, filename, db_state=None ):
    return True
 
 
-def db_iterable( block_id, db_state=None ):
+def db_serialize( opcode, opdata, db_state=None ):
    """
-   Return an iterable object that represents 
-   a stable ordering of all serialized records in the database.
-   That is, each entity yielded by the returned iterable must be 
-   a string that represents a record, and the strings yielded 
-   back by the iterable must be subject to a stable total ordering.
-   For example, sorting the serialized set of records and returning 
-   an array of them would work, provided that the set of records 
-   is small enough to fit into RAM.
-   
-   This is used to generate the data that will be fed into 
-   the consensus hash for the current block.
+   Given an operation and its data, serialize it.
+   Return a string representing this operation.
    """
    print "\nreference implementation of db_iterable\n"
-   return []
+   return ""
 
