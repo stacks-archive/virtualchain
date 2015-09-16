@@ -324,7 +324,7 @@ class StateEngine( object ):
         previous_consensus_hash = self.get_consensus_at( block_id - 1 )
         if previous_consensus_hash is None:
             # NULL consensus hash 
-            previous_consensus_hash = pybitcoin.hash.bin_double_sha256( "" )
+            previous_consensus_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( "" ) )
             
         # serialize each operation 
         hashes = []
@@ -337,13 +337,13 @@ class StateEngine( object ):
                     continue 
                 
                 serialized_record = self.impl.db_serialize( op, nameop, db_state=self.state )
-                record_hash = pybitcoin.hash.bin_double_sha256( serialized_record )
+                record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
                 hashes.append( record_hash )
         
         # include the previous merkel root 
         hashes.append( previous_consensus_hash )
             
-        merkle_tree = pybitcoin.MerkleTree( hashes, hex_format=False )
+        merkle_tree = pybitcoin.MerkleTree( hashes )
         root_hash = merkle_tree.root()
         
         consensus_hash = self.calculate_consensus_hash( root_hash )
@@ -528,7 +528,7 @@ class StateEngine( object ):
         Return None on error
         """
         
-        log.debug("Process block %s (%s txs)" % (block_id, len(txs)))
+        log.debug("Process block %s (%s txs with nulldata)" % (block_id, len(txs)))
         
         ops = self.parse_block( block_id, txs )
         pending_ops = self.log_pending_ops( block_id, ops )
@@ -592,13 +592,13 @@ class StateEngine( object ):
                 # process in order by block ID
                 block_ids_and_txs.sort()
                 
-                log.info("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
+                log.debug("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
                     
                 for processed_block_id, txs in block_ids_and_txs:
                     
                     consensus_hash = self.process_block( processed_block_id, txs )
                     
-                    log.info("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )))
+                    log.debug("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )))
                     
                     if consensus_hash is None:
                         
@@ -631,7 +631,7 @@ class StateEngine( object ):
         this method will do nothing.
         """
         
-        log.info("Stop building")
+        log.debug("Stop building")
         
         if self.pool is not None:
             try:
