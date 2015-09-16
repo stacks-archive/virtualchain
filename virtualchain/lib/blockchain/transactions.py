@@ -85,12 +85,16 @@ def getrawtransaction( bitcoind_or_opts, block_hash, txid, verbose=0 ):
          except JSONRPCException, je:
             log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
             exc_to_raise = je
+        
+            new_opts = get_bitcoind_opts( bitcoind_or_opts )
+            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue
 
          except Exception, e:
             log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
             log.exception(e)
             exc_to_raise = e
+            
             new_opts = get_bitcoind_opts( bitcoind_or_opts )
             bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue 
@@ -116,18 +120,21 @@ def getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, verbo
    to go get it.
    """
    
-   log.debug("getrawtransaction_async %s, %s" % (block_hash, tx_hash))
    tx_result = workpool.apply_async( getrawtransaction, (bitcoind_opts, block_hash, tx_hash, verbose) )
    return tx_result
 
 
-def getblockhash( bitcoind_or_opts, block_number ):
+def getblockhash( bitcoind_or_opts, block_number, reset ):
    """
    Get a block's hash, given its ID.
    """
    
    exc_to_raise = None  # exception to raise if we fail
    bitcoind = get_bitcoind( bitcoind_or_opts )
+   
+   if reset:
+       new_opts = get_bitcoind_opts( bitcoind_or_opts )
+       bitcoind = multiprocess_bitcoind( new_opts, reset=True )
    
    for i in xrange(0, MULTIPROCESS_RPC_RETRY):
       try:
@@ -138,12 +145,16 @@ def getblockhash( bitcoind_or_opts, block_number ):
          except JSONRPCException, je:
             log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
             exc_to_raise = je 
+        
+            new_opts = get_bitcoind_opts( bitcoind_or_opts )
+            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue
          
          except Exception, e:
             log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
             log.exception(e)
             exc_to_raise = e
+            
             new_opts = get_bitcoind_opts( bitcoind_or_opts )
             bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue 
@@ -162,14 +173,15 @@ def getblockhash( bitcoind_or_opts, block_number ):
       raise Exception("Failed after %s attempts" % MULTIPROCESS_RPC_RETRY)
    
 
-def getblockhash_async( workpool, bitcoind_opts, block_number ):
+def getblockhash_async( workpool, bitcoind_opts, block_number, reset=False ):
    """
    Get a block's hash, asynchronously, given its ID
    Return a future to the block hash 
    """
    
+   block_hash_future = workpool.apply_async( getblockhash, (bitcoind_opts, block_number, reset) )
    log.debug("getblockhash_async %s" % block_number)
-   block_hash_future = workpool.apply_async( getblockhash, (bitcoind_opts, block_number) )
+   
    return block_hash_future
 
 
@@ -231,8 +243,9 @@ def getblock_async( workpool, bitcoind_opts, block_number, block_hash ):
    Get a block's data, given its hash.
    Return a future to the data.
    """
-   log.debug("getblock_async %s %s" % (block_number, block_hash))
    block_future = workpool.apply_async( getblock, (bitcoind_opts, block_hash) )
+   
+   log.debug("getblock_async %s %s" % (block_number, block_hash))
    return block_future 
 
 
@@ -317,6 +330,8 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
       tx_hash = input['txid']
       tx_output_index = input['vout']
       
+      tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
+      """
       tx_fut = None 
       if tx_hash in tx_cache.keys():
          tx_fut = tx_cache[ tx_hash ]
@@ -324,6 +339,7 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
       else:
          tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
          tx_cache[ tx_hash ] = tx_fut
+      """
       
       tx_futs.append( (i, tx_fut, tx_output_index) )
     
@@ -426,7 +442,8 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          
          block_times[block_number] = time.time() 
          
-         block_hash_fut = getblockhash_async( workpool, bitcoind_opts, block_number )
+         # NOTE: force re-connect, since the previous connection will have expired if we take a while to process all nulldata 
+         block_hash_fut = getblockhash_async( workpool, bitcoind_opts, block_number, reset=True )
          block_hash_futures.append( (block_number, block_hash_fut) )
    
    
@@ -472,6 +489,8 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             for j in xrange(0, len(tx_hashes)):
                
                tx_hash = tx_hashes[j]
+               tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
+               """
                tx_fut = None 
                
                if tx_hash in tx_cache.keys():
@@ -482,16 +501,13 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
                   # dispatch all transaction queries for this block
                   tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
                   tx_cache[ tx_hash ] = tx_fut
-                  
+               """
                tx_futures.append( (block_number, j, block_hash, tx_fut) )
             
          else:
             
-            # maybe done with this block
-            # NOTE will be called multiple times; we expect the last write to be the total time taken by this block
-            total_time = time.time() - block_times[ block_number ]
-            block_bandwidth[ block_number ] = bandwidth_record( total_time, None )
-            
+            raise Exception("Zero-transaction block %s" % block_number)
+        
             
       block_tx_time_start = time.time()
       block_tx_time_end = 0
@@ -512,7 +528,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             # but tag each future with the hash of the current tx, so we can reassemble the in-flight inputs back into it. 
             nulldata_tx_futs_and_output_idxs = process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx )
             nulldata_tx_futures.append( (block_number, tx_index, tx, nulldata_tx_futs_and_output_idxs) )
-                  
+            
          else:
             
             # maybe done with this block
