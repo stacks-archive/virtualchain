@@ -567,7 +567,7 @@ class StateEngine( object ):
         num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
 
         rc = True
-        self.pool = Pool( processes=num_workers )
+        self.pool = workpool.multiprocess_pool( bitcoind_opts )
         
         try:
             
