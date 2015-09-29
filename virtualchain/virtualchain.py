@@ -53,23 +53,7 @@ running = False
 # (can be overwritten to mock a blockchain)
 connect_bitcoind = session.connect_bitcoind
 
-<<<<<<< HEAD
-def sync_virtualchain( bitcoind_opts, last_block, state_engine ):
-=======
-
-def json_traceback():
-    """
-    Return a traceback as a JSON object.
-    """
-    exception_data = traceback.format_exc().splitlines()
-    return {
-        "error": exception_data[-1],
-        "traceback": exception_data
-    }
-
-
 def sync_virtualchain(bitcoind_opts, last_block, state_engine):
->>>>>>> d6f9da33ca3d88d8f7f5e73106bd0a6357254808
     """
     Synchronize the virtual blockchain state up until a given block.
 
