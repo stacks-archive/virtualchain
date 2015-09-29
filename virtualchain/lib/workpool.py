@@ -31,6 +31,7 @@ import os
 import sys
 import signal
 import blockchain
+from multiprocessing import Pool
 
 # bitcoind just for this process
 process_local_bitcoind = None
@@ -59,3 +60,14 @@ def multiprocess_batch_size( bitcoind_opts ):
    """
    num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
    return num_workers * worker_batch_size
+
+
+def multiprocess_pool( bitcoind_opts ):
+   """
+   Given bitcoind options, create a multiprocess pool 
+   for querying it.
+   """
+   num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
+   return Pool( processes=num_workers )
+
+    
