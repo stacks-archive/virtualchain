@@ -59,6 +59,9 @@ def get_bitcoind_opts( bitcoind_or_opts ):
    Given either a bitcoind API endpoint proxy,
    or a dict of options, generate the set of options.
    """
+   if bitcoind_or_opts is None:
+      return None 
+   
    if type(bitcoind_or_opts) == types.DictType:
       return bitcoind_or_opts
    
@@ -66,7 +69,7 @@ def get_bitcoind_opts( bitcoind_or_opts ):
       return bitcoind_or_opts.opts 
    
 
-def getrawtransaction( bitcoind_or_opts, block_hash, txid, verbose=0 ):
+def getrawtransaction( bitcoind_or_opts, txid, verbose=0 ):
    """
    Get a raw transaction by txid.
    Only call out to bitcoind if we need to.
@@ -74,6 +77,9 @@ def getrawtransaction( bitcoind_or_opts, block_hash, txid, verbose=0 ):
    
    exc_to_raise = None
    bitcoind = get_bitcoind( bitcoind_or_opts )
+   
+   if bitcoind_or_opts is None:
+       raise Exception("No bitcoind or opts given")
    
    for i in xrange(0, MULTIPROCESS_RPC_RETRY):
       try:
@@ -85,7 +91,7 @@ def getrawtransaction( bitcoind_or_opts, block_hash, txid, verbose=0 ):
          except JSONRPCException, je:
             log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
             exc_to_raise = je
-        
+            
             new_opts = get_bitcoind_opts( bitcoind_or_opts )
             bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue
@@ -114,24 +120,28 @@ def getrawtransaction( bitcoind_or_opts, block_hash, txid, verbose=0 ):
       raise Exception("Failed after %s attempts" % MULTIPROCESS_RPC_RETRY)
 
 
-def getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, verbose ):
+def getrawtransaction_async( workpool, bitcoind_opts, tx_hash, verbose ):
    """
    Get a block transaction, asynchronously, using the pool of processes
    to go get it.
    """
    
-   tx_result = workpool.apply_async( getrawtransaction, (bitcoind_opts, block_hash, tx_hash, verbose) )
+   tx_result = workpool.apply_async( getrawtransaction, (bitcoind_opts, tx_hash, verbose) )
    return tx_result
 
 
 def getblockhash( bitcoind_or_opts, block_number, reset ):
    """
    Get a block's hash, given its ID.
+   Return None if there are no options
    """
    
    exc_to_raise = None  # exception to raise if we fail
    bitcoind = get_bitcoind( bitcoind_or_opts )
    
+   if bitcoind_or_opts is None:
+       raise Exception("No bitcoind or opts given")
+       
    if reset:
        new_opts = get_bitcoind_opts( bitcoind_or_opts )
        bitcoind = multiprocess_bitcoind( new_opts, reset=True )
@@ -156,6 +166,9 @@ def getblockhash( bitcoind_or_opts, block_number, reset ):
             exc_to_raise = e
             
             new_opts = get_bitcoind_opts( bitcoind_or_opts )
+            if new_opts is None:
+                raise Exception("No bitcoind or opts given")
+            
             bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue 
          
@@ -189,7 +202,9 @@ def getblock( bitcoind_or_opts, block_hash ):
    """
    Get a block's data, given its hash.
    """
-   
+   if bitcoind_or_opts is None:
+       raise Exception("No bitcoind or opts given")
+    
    exc_to_raise = None
    bitcoind = get_bitcoind( bitcoind_or_opts )
    attempts = 0
@@ -238,14 +253,12 @@ def getblock( bitcoind_or_opts, block_hash ):
    
 
 
-def getblock_async( workpool, bitcoind_opts, block_number, block_hash ):
+def getblock_async( workpool, bitcoind_opts, block_hash ):
    """
    Get a block's data, given its hash.
    Return a future to the data.
    """
    block_future = workpool.apply_async( getblock, (bitcoind_opts, block_hash) )
-   
-   log.debug("getblock_async %s %s" % (block_number, block_hash))
    return block_future 
 
 
@@ -292,7 +305,7 @@ def get_total_out(outputs):
     return total_out
  
 
-def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
+def process_nulldata_tx_async( workpool, bitcoind_opts, tx ):
     """
     Given a transaction and a block hash, begin fetching each 
     of the transaction's vin's transactions.  The reason being,
@@ -317,7 +330,6 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
         return None
 
     inputs = tx['vin']
-    tx_cache = {}
     
     for i in xrange(0, len(inputs)):
       input = inputs[i]
@@ -330,17 +342,7 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx ):
       tx_hash = input['txid']
       tx_output_index = input['vout']
       
-      tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
-      """
-      tx_fut = None 
-      if tx_hash in tx_cache.keys():
-         tx_fut = tx_cache[ tx_hash ]
-      
-      else:
-         tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
-         tx_cache[ tx_hash ] = tx_fut
-      """
-      
+      tx_fut = getrawtransaction_async( workpool, bitcoind_opts, tx_hash, 1 )
       tx_futs.append( (i, tx_fut, tx_output_index) )
     
     return tx_futs 
@@ -457,8 +459,10 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
          block_hash = block_hash_fut.get( 10000000000000000L )
-         block_data_fut = getblock_async( workpool, bitcoind_opts, block_number, block_hash )
-         block_data_futures.append( (block_number, block_hash, block_data_fut) )
+         
+         log.debug("getblock_async %s %s" % (block_number, block_hash))
+         block_data_fut = getblock_async( workpool, bitcoind_opts, block_hash )
+         block_data_futures.append( (block_number, block_data_fut) )
       
       
       block_data_time_start = time.time()
@@ -467,7 +471,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       # coalesce block data, and get tx hashes 
       for i in xrange(0, len(block_data_futures)):
          
-         block_number, block_hash, block_data_fut = future_next( block_data_futures, lambda f: f[2] )
+         block_number, block_data_fut = future_next( block_data_futures, lambda f: f[1] )
          block_hash_time_end = time.time()
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
@@ -478,7 +482,6 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             return nulldata_txs
          
          tx_hashes = block_data['tx']
-         tx_cache = {}
          
          log.debug("Get %s transactions from block %d" % (len(tx_hashes), block_number))
          
@@ -489,20 +492,8 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             for j in xrange(0, len(tx_hashes)):
                
                tx_hash = tx_hashes[j]
-               tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
-               """
-               tx_fut = None 
-               
-               if tx_hash in tx_cache.keys():
-                  
-                  tx_fut = tx_cache[ tx_hash ]
-               else:
-                  
-                  # dispatch all transaction queries for this block
-                  tx_fut = getrawtransaction_async( workpool, bitcoind_opts, block_hash, tx_hash, 1 )
-                  tx_cache[ tx_hash ] = tx_fut
-               """
-               tx_futures.append( (block_number, j, block_hash, tx_fut) )
+               tx_fut = getrawtransaction_async( workpool, bitcoind_opts, tx_hash, 1 )
+               tx_futures.append( (block_number, j, tx_fut) )
             
          else:
             
@@ -516,7 +507,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       # coalesce raw transaction queries...
       for i in xrange(0, len(tx_futures)):
          
-         block_number, tx_index, block_hash, tx_fut = future_next( tx_futures, lambda f: f[3] )
+         block_number, tx_index, tx_fut = future_next( tx_futures, lambda f: f[2] )
          block_data_time_end = time.time()
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
@@ -526,7 +517,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             
             # go get input transactions for this transaction (since it's the one with nulldata, i.e., a virtual chain operation),
             # but tag each future with the hash of the current tx, so we can reassemble the in-flight inputs back into it. 
-            nulldata_tx_futs_and_output_idxs = process_nulldata_tx_async( workpool, bitcoind_opts, block_hash, tx )
+            nulldata_tx_futs_and_output_idxs = process_nulldata_tx_async( workpool, bitcoind_opts, tx )
             nulldata_tx_futures.append( (block_number, tx_index, tx, nulldata_tx_futs_and_output_idxs) )
             
          else:
