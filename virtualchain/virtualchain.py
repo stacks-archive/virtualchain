@@ -53,17 +53,6 @@ running = False
 # (can be overwritten to mock a blockchain)
 connect_bitcoind = session.connect_bitcoind
 
-def json_traceback():
-    """
-    Return a traceback as a JSON object.
-    """
-    exception_data = traceback.format_exc().splitlines()
-    return {
-        "error": exception_data[-1],
-        "traceback": exception_data
-    }
-
-
 def sync_virtualchain( bitcoind_opts, last_block, state_engine ):
     """
     Synchronize the virtual blockchain state up until a given block.
@@ -167,7 +156,7 @@ def run_virtualchain():
 
 
 
-def setup_virtualchain( impl_module, bitcoind_connection_factory=session.connect_bitcoind ):
+def setup_virtualchain( impl_module, testset=False, bitcoind_connection_factory=session.connect_bitcoind ):
    """
    Set up the virtual blockchain.
    Use the given virtual blockchain core logic.
@@ -175,7 +164,7 @@ def setup_virtualchain( impl_module, bitcoind_connection_factory=session.connect
    
    global connect_bitcoind 
    
-   config.set_implementation( impl_module )
+   config.set_implementation( impl_module, testset )
    connect_bitcoind=bitcoind_connection_factory
    
 
