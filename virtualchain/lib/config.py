@@ -27,8 +27,7 @@ import argparse
 from ConfigParser import SafeConfigParser
 
 DEBUG = True
-TESTNET = False
-TESTSET = True
+TESTSET = False
 IMPL = None             # class, package, or instance that implements the virtual chain state
 
 """ virtualchain daemon configs
@@ -72,7 +71,7 @@ def get_working_dir():
    from os.path import expanduser
    home = expanduser("~")
    
-   working_dir = os.path.join(home, "." + IMPL.get_virtual_chain_name())
+   working_dir = os.path.join(home, "." + IMPL.get_virtual_chain_name(testset=TESTSET))
 
    if not os.path.exists(working_dir):
       os.makedirs(working_dir)
@@ -87,7 +86,7 @@ def get_config_filename():
    global IMPL 
    
    working_dir = get_working_dir()
-   config_filename = IMPL.get_virtual_chain_name() + ".ini"
+   config_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".ini"
    
    return os.path.join(working_dir, config_filename )
 
@@ -99,7 +98,7 @@ def get_db_filename():
    global IMPL 
    
    working_dir = get_working_dir()
-   lastblock_filename = IMPL.get_virtual_chain_name() + ".db"
+   lastblock_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".db"
    
    return os.path.join( working_dir, lastblock_filename )
 
@@ -111,7 +110,7 @@ def get_lastblock_filename():
    global IMPL 
    
    working_dir = get_working_dir()
-   lastblock_filename = IMPL.get_virtual_chain_name() + ".lastblock"
+   lastblock_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".lastblock"
    
    return os.path.join( working_dir, lastblock_filename )
 
@@ -123,7 +122,7 @@ def get_snapshots_filename():
    global IMPL 
    
    working_dir = get_working_dir()
-   snapshots_filename = IMPL.get_virtual_chain_name() + ".snapshots"
+   snapshots_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".snapshots"
    
    return os.path.join( working_dir, snapshots_filename )
 
@@ -215,7 +214,7 @@ def parse_bitcoind_args( return_parser=False, parser=None ):
     opts = {}
     
     if parser is None:
-       parser = argparse.ArgumentParser( description='%s version %s' % (IMPL.get_virtual_chain_name(), IMPL.get_virtual_chain_version()))
+       parser = argparse.ArgumentParser( description='%s version %s' % (IMPL.get_virtual_chain_name(testset=TESTSET), IMPL.get_virtual_chain_version()))
 
     parser.add_argument(
         '--bitcoind-server',
@@ -262,13 +261,15 @@ def get_implementation():
    return IMPL 
 
     
-def set_implementation( impl ):
+def set_implementation( impl, testset ):
    """
    Set the package, class, or bundle of methods 
    that implements the virtual chain's core logic.
    This method must be called before anything else.
    """
    global IMPL 
+   global TESTSET
    
    IMPL = impl
+   TESTSET = testset
    
