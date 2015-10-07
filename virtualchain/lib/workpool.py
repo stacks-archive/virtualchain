@@ -49,7 +49,8 @@ def multiprocess_bitcoind( bitcoind_opts, reset=False ):
    if process_local_bitcoind is None:
       # this proces does not yet have a bitcoind client.
       # make one.
-      process_local_bitcoind = blockchain.session.connect_bitcoind( bitcoind_opts )
+      from ..virtualchain import connect_bitcoind
+      process_local_bitcoind = connect_bitcoind( bitcoind_opts )
       
    return process_local_bitcoind
 
