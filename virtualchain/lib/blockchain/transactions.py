@@ -97,10 +97,9 @@ def getrawtransaction( bitcoind_or_opts, txid, verbose=0 ):
             continue
 
          except Exception, e:
-            log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
-            log.exception(e)
+            log.error("\n\n[%s] Caught Exception from bitcoind: %s" % (os.getpid(), repr(e)))
             exc_to_raise = e
-            
+        
             new_opts = get_bitcoind_opts( bitcoind_or_opts )
             bitcoind = multiprocess_bitcoind( new_opts, reset=True)
             continue 
@@ -161,8 +160,7 @@ def getblockhash( bitcoind_or_opts, block_number, reset ):
             continue
          
          except Exception, e:
-            log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
-            log.exception(e)
+            log.error("\n\n[%s] Caught Exception from bitcoind: %s" % (os.getpid(), repr(e)))
             exc_to_raise = e
             
             new_opts = get_bitcoind_opts( bitcoind_or_opts )
@@ -229,8 +227,7 @@ def getblock( bitcoind_or_opts, block_hash ):
          continue
      
       except Exception, e:
-         log.error("\n\n[%s] Caught Exception from bitcoind" % (os.getpid()))
-         log.exception(e)
+         log.error("\n\n[%s] Caught Exception from bitcoind: %s" % (os.getpid(), repr(e)))
          exc_to_raise = e
      
          attempts += 1
@@ -498,11 +495,9 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          else:
             
             raise Exception("Zero-transaction block %s" % block_number)
-        
             
       block_tx_time_start = time.time()
       block_tx_time_end = 0
-      
       
       # coalesce raw transaction queries...
       for i in xrange(0, len(tx_futures)):
