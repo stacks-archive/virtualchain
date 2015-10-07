@@ -70,8 +70,13 @@ def get_working_dir():
    
    from os.path import expanduser
    home = expanduser("~")
-   
-   working_dir = os.path.join(home, "." + IMPL.get_virtual_chain_name(testset=TESTSET))
+  
+   working_dir = None
+   if hasattr( IMPL, "working_dir" ):
+       working_dir = IMPL.working_dir
+
+   else:
+       working_dir = os.path.join(home, "." + IMPL.get_virtual_chain_name(testset=TESTSET))
 
    if not os.path.exists(working_dir):
       os.makedirs(working_dir)
@@ -138,7 +143,10 @@ def configure_multiprocessing( bitcoind_opts ):
    
    if bitcoind_opts is None:
       return (None, None)
-   
+  
+   if bitcoind_opts.has_key("multiprocessing_num_procs") and bitcoind_opts.has_key("multiprocessing_num_blocks"):
+      return bitcoind_opts["multiprocessing_num_procs"], bitcoind_opts["multiprocessing_num_blocks"]
+
    if bitcoind_opts.get("bitcoind_server", None) is None:
       return (None, None)
    
