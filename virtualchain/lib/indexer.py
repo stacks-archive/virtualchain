@@ -57,7 +57,7 @@ class StateEngine( object ):
     Client to the virtual chain's database of operations, constructed and  
     kept synchronized with records in the underlying blockchain.  If the blockchain 
     is the ledger of all operations to have ever been committed 
-    (including invalid and fraudulent ones), then the virtual chain is the subsequence 
+    (including invalid and fraudulent ones), then the virtual chain is the sequence 
     of operations that we're interested in, and the state engine is the logic
     for finding and processing the subsequence of these that are "valid."
     
@@ -67,26 +67,32 @@ class StateEngine( object ):
     encoded in transactions data within the underlying cryptocurrency (i.e. OP_RETURNs in Bitcoin).
     Each block in the blockchain must be fed into the database, and the blocks' 
     operations extracted, validated, and accounted for.  As such, at block N,
-    the state engine would have a database represents the current state of names and storage at block N.
+    the state engine would have a database represents its current state at block N.
     
     Because the underlying cryptocurrency blockchain can fork, state engine peers need to 
     determine that they are on the same fork so they will know which virtual chain operations 
-    to process.  To do so, the state engine calculates a Merkle tree over its 
-    current state (i.e. the set of names) at the current block, and encodes the root
-    hash in each operation.  Then, one peer can tell that the other peer's operations
+    to process.  To do so, the state engine calculates a Merkle tree over the operations processed 
+    from the current block, as well as the root of the previous such tree for the previous block,
+    and encodes the root hash in each operation.  Then, one peer can tell that the other peer's operations
     were calculated on the same blockchain fork simply by ensuring that the operation had
     the right Merkle root hash for that block.  These Merkle root hashes are called
     "consensus hashes."
     
-    Processing a block happens in five stages: "parse", "check", "log", "commit", and "snapshot"
+    Processing a block happens in seven stages: "parse", "check", "log", "commit", "serialize", "snapshot", and "save"
     * "Parsing" a block transaction's nulldata (i.e. from an OP_RETURN) means translating 
     the OP_RETURN data into a virtual chain operation.
     * "Checking" an operation means ensuring the operation is valid.
     * "Logging" an operation means staging an operation to be fed into the state engine.
     * "Committing" an operation means feeding it into the state engine.
+    * "Serializing" an operation means turning it into a byte string, in preparation for snapshotting.
     * "Snapshotting" means calculating the consensus hash of the state engine, at block N.
+    * "Saving" means writing the new state to persistent storage.
     
-    Blocks are processed in order.
+    Blocks are processed in order, and transactions within a block are processed in the order in which 
+    they appear in it.
+    
+    Each record fed into the state engine will be given the following data:
+    * 'virtualchain_txid':  the transaction ID from which the operation was extracted
     """
     
     RESERVED_KEYS = [
@@ -95,7 +101,7 @@ class StateEngine( object ):
        'virtualchain_senders',
        'virtualchain_fee',
        'virtualchain_block_number',
-       'virutalchain_accepted'
+       'virtualchain_accepted'
     ]
     
     def __init__(self, magic_bytes, opcodes, impl=None, state=None, op_order=None, initial_snapshots={} ):
@@ -317,6 +323,30 @@ class StateEngine( object ):
         """
         Given the currnet block ID and the set of operations committed,
         find the consensus hash that represents the state of the virtual chain.
+        
+        The consensus hash is calculated as a "Merkle skip-list."  It incorporates:
+        * block K's operations 
+        * block K - 1's consensus hash 
+        * block K - 2 - 1's consensus hash 
+        * block K - 4 - 2 - 1's consensus hash, 
+        ...
+        
+        The purpose of this construction is that it reduces the number of queries 
+        a client needs to verify the integrity of previously-processed operations
+        to a *sublinear* function of the length of the virtual blockchain.
+        
+        For example, if there are 15 blocks in the virtual chain, and a client has 
+        the consensus hash for block 15 (ch[15]) but wants to verify an operation at block 3, the 
+        client would:
+        1.    Fetch ops[15], ch[14], ch[12], ch[8], ch[0]
+        2.    Verify (1) with ch[15], so ch[8] is trusted.
+        3.    Fetch ops[8], ch[7], ch[5], ch[1]
+        4.    Verify (3) with ch[8], so ch[5] is trusted
+        5.    Fetch ops[5], ch[3]
+        6.    Verify (5) and ch[1] from (3) with ch[5], so ch[3] is trusted
+        7.    Fetch ops[3], ch[2]
+        8.    Verify (7) and ch[0] from (1) with ch[3], so ops[3] is trusted
+        9.    Verify op in ops[3]
         """
         
         log.debug("Snapshotting block %s" % (block_id) )
@@ -340,8 +370,19 @@ class StateEngine( object ):
                 record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
                 hashes.append( record_hash )
         
-        # include the previous merkel root 
+        
+        # include the previous merkel roots
+        # K - 1
         hashes.append( previous_consensus_hash )
+        
+        # K - 2 - 1 and previous
+        K = block_id - self.impl.get_first_block_id()
+        past = 3
+        i = 1
+        while K - past > 0:
+            hashes.append( self.get_consensus_at( K - past + self.impl.get_first_block_id() ) )
+            past += (2 << i)
+            i += 1
             
         merkle_tree = pybitcoin.MerkleTree( hashes )
         root_hash = merkle_tree.root()
@@ -414,6 +455,7 @@ class StateEngine( object ):
         op['virtualchain_fee'] = fee
         op['virtualchain_block_number'] = block_id
         op['virtualchain_accepted'] = False       # not yet accepted
+        op['virtualchain_txid'] = tx['txid']
         
         return op
    
