@@ -27,7 +27,7 @@ import pybitcoin
 def get_nulldata(tx):
     if not ('vout' in tx):
         return None
-     
+    
     outputs = tx['vout']
     
     # go through all the outputs
@@ -41,21 +41,21 @@ def get_nulldata(tx):
         script_pubkey = output['scriptPubKey']
         
         # get the script parts and script type
-        script_parts = str(script_pubkey.get('asm')).split(' ')
-        script_type = str(script_pubkey.get('type'))
+        script_parts = str(script_pubkey['asm']).split(' ')
+        script_type = str(script_pubkey['type'])
         
         # get the nulldata from the OP_RETURN
         if script_type == 'nulldata' and len(script_parts) == 2:
             
             # make *sure* this is hex (since small OP_RETURNs get turned 
-            # into numbers)
-            raw_opcode = script_pubkey.get('hex')[:2]
+            # into numbers, by virtue of the fact that they look like varints).
+            raw_opcode = script_pubkey['hex'][:2]
             
             hex_str = script_parts[1]
-            if hex_str != script_pubkey.get('hex')[4:] and ("0x" + str(raw_opcode) == hex(pybitcoin.transactions.opcodes.OP_RETURN)):
+            if hex_str != script_pubkey['hex'][4:] and ("0x" + str(raw_opcode) == hex(pybitcoin.transactions.opcodes.OP_RETURN)):
                 
-                # get the raw hex, and remove the leading OP_RETURN code and OP_PUSHDATA op
-                hex_str = script_pubkey.get('hex')[4:]
+                # get the raw hex, and remove the leading OP_RETURN code and length op
+                hex_str = script_pubkey['hex'][4:]
                 
             return hex_str
         
