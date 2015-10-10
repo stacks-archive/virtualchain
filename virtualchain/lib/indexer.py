@@ -183,9 +183,6 @@ class StateEngine( object ):
               log.error("Failed to read last block number at '%s'" % lastblock_filename )
               raise e
           
-        if len(self.consensus_hashes) < 20:
-            print "consensus hashes:\n%s" % json.dumps( self.consensus_hashes, indent=4 )
-            
           
     def rollback( self ):
         """
@@ -558,7 +555,7 @@ class StateEngine( object ):
        
        
     
-    def process_block( self, block_id, txs ):
+    def process_block( self, block_id, ops ):
         """
         Top-level block processing method.
         Feed the block and its OP_RETURN transactions 
@@ -570,9 +567,8 @@ class StateEngine( object ):
         Return None on error
         """
         
-        log.debug("Process block %s (%s txs with nulldata)" % (block_id, len(txs)))
+        log.debug("Process block %s (%s txs with nulldata)" % (block_id, len(ops)))
         
-        ops = self.parse_block( block_id, txs )
         pending_ops = self.log_pending_ops( block_id, ops )
         self.commit_pending_ops( block_id, pending_ops )
 
@@ -638,7 +634,8 @@ class StateEngine( object ):
                     
                 for processed_block_id, txs in block_ids_and_txs:
                     
-                    consensus_hash = self.process_block( processed_block_id, txs )
+                    ops = self.parse_block( block_id, txs )
+                    consensus_hash = self.process_block( processed_block_id, ops )
                     
                     log.debug("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )))
                     
@@ -719,6 +716,11 @@ class StateEngine( object ):
         """
         return self.get_consensus_at( str(self.lastblock) )
 
+    def get_current_block( self ):
+        """
+        Get the last block Id processed.
+        """
+        return self.lastblock
 
     def is_consensus_hash_valid( self, block_id, consensus_hash ):
         """
