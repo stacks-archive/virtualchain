@@ -102,26 +102,30 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
     
     authproxy_config_uri = '%s://%s:%s@%s:%s' % (protocol, rpc_username, rpc_password, server, port)
     
-    # TODO: ship with a cert
-    if do_wrap_socket:
-       # ssl._create_unverified_context and ssl.create_default_context are not supported.
-       # wrap the socket directly 
-       connection = BitcoindConnection( server, int(port), timeout=300 )
-       ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
-       
-       
-    elif create_ssl_authproxy:
-       # ssl has _create_unverified_context, so we're good to go 
-       ret = AuthServiceProxy(authproxy_config_uri, timeout=300)
-    
+    if use_https:
+        # TODO: ship with a cert
+        if do_wrap_socket:
+           # ssl._create_unverified_context and ssl.create_default_context are not supported.
+           # wrap the socket directly 
+           connection = BitcoindConnection( server, int(port), timeout=300 )
+           ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
+           
+           
+        elif create_ssl_authproxy:
+           # ssl has _create_unverified_context, so we're good to go 
+           ret = AuthServiceProxy(authproxy_config_uri, timeout=300)
+        
+        else:
+           # have to set up an unverified context ourselves 
+           ssl_ctx = ssl.create_default_context()
+           ssl_ctx.check_hostname = False
+           ssl_ctx.verify_mode = ssl.CERT_NONE
+           connection = httplib.HTTPSConnection( server, int(port), context=ssl_ctx, timeout=300 )
+           ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
+          
     else:
-       # have to set up an unverified context ourselves 
-       ssl_ctx = ssl.create_default_context()
-       ssl_ctx.check_hostname = False
-       ssl_ctx.verify_mode = ssl.CERT_NONE
-       connection = httplib.HTTPSConnection( server, int(port), context=ssl_ctx, timeout=300 )
-       ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
-       
+        ret = AuthServiceProxy(authproxy_config_uri)
+
     # remember the options 
     bitcoind_opts = {
        "bitcoind_user": rpc_username,
