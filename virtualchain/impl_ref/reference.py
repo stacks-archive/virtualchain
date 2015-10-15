@@ -110,7 +110,7 @@ def db_check( block_id, checked_ops, opcode, op, db_state=None ):
    return False
    
    
-def db_commit( block_id, opcode, op, db_state=None ):
+def db_commit( block_id, opcode, op, txid, db_state=None ):
    """
    Given a block ID and checked opcode, record it as 
    part of the database.  This does *not* need to write 
