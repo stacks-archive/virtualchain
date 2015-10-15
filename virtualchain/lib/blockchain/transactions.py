@@ -430,7 +430,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       all_nulldata_tx_futures = []
       block_times = {}          # {block_number: time taken to process}
       
-      block_slice = blocks_ids[ (slice_count * slice_len) : min((slice_count+1) * slice_len, len(blocks_ids)-1) ]
+      block_slice = blocks_ids[ (slice_count * slice_len) : min((slice_count+1) * slice_len, len(blocks_ids)) ]
       if len(block_slice) == 0:
          break
       
@@ -456,10 +456,14 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
          block_hash = block_hash_fut.get( 10000000000000000L )
-         
-         log.debug("getblock_async %s %s" % (block_number, block_hash))
-         block_data_fut = getblock_async( workpool, bitcoind_opts, block_hash )
-         block_data_futures.append( (block_number, block_data_fut) )
+        
+         if block_hash is not None:
+             log.debug("getblock_async %s %s" % (block_number, block_hash))
+             block_data_fut = getblock_async( workpool, bitcoind_opts, block_hash )
+             block_data_futures.append( (block_number, block_data_fut) )
+
+         else:
+             log.warning("Block %s: no block hash" % block_number)
       
       
       block_data_time_start = time.time()
