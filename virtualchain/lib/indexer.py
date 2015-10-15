@@ -51,6 +51,16 @@ from ..impl_ref import reference            # default no-op state engine impleme
 from utilitybelt import is_hex
 
 log = session.log
+    
+RESERVED_KEYS = [
+   'virtualchain_opcode',
+   'virtualchain_outputs',
+   'virtualchain_senders',
+   'virtualchain_fee',
+   'virtualchain_block_number',
+   'virtualchain_accepted',
+   'virtualchain_txid'
+]
 
 class StateEngine( object ):
     """
@@ -95,15 +105,7 @@ class StateEngine( object ):
     * 'virtualchain_txid':  the transaction ID from which the operation was extracted
     """
     
-    RESERVED_KEYS = [
-       'virtualchain_opcode',
-       'virtualchain_outputs',
-       'virtualchain_senders',
-       'virtualchain_fee',
-       'virtualchain_block_number',
-       'virtualchain_accepted'
-    ]
-    
+
     def __init__(self, magic_bytes, opcodes, impl=None, state=None, op_order=None, initial_snapshots={} ):
         """
         Construct a state engine client, optionally from locally-cached 
@@ -145,8 +147,9 @@ class StateEngine( object ):
         self.state = state
         self.op_order = op_order
         self.impl = impl
-        self.lastblock = self.impl.get_first_block_id()
+        self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
+        self.rejected = {}
         
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
@@ -355,15 +358,18 @@ class StateEngine( object ):
             
         # serialize each operation 
         hashes = []
-        
-        for (op, nameops) in pending_ops.items():
+       
+        # fix order 
+        op_order = sorted( pending_ops.keys() )
+        for op in op_order:
+
+            nameops = pending_ops[op]
             for nameop in nameops:
                 
-                # skip rejected 
-                if not nameop['virtualchain_accepted']:
-                    continue 
-                
                 serialized_record = self.impl.db_serialize( op, nameop, db_state=self.state )
+
+                log.debug("Block %s: '%s'" % (block_id, serialized_record))
+
                 record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
                 hashes.append( record_hash )
         
@@ -380,7 +386,8 @@ class StateEngine( object ):
             hashes.append( self.get_consensus_at( K - past + self.impl.get_first_block_id() ) )
             past += (2 << i)
             i += 1
-            
+           
+        hashes.sort()
         merkle_tree = pybitcoin.MerkleTree( hashes )
         root_hash = merkle_tree.root()
         
@@ -488,13 +495,21 @@ class StateEngine( object ):
         reserved = {}
         
         for k in op.keys():
-            if k not in self.RESERVED_KEYS:
-                sanitized[k] = op[k]
+            if str(k) not in RESERVED_KEYS:
+                sanitized[str(k)] = op[k]
             else:
-                reserved[k] = op[k]
+                reserved[str(k)] = op[k]
                 
         return sanitized, reserved
-          
+  
+
+    def sanitize_op( self, op ):
+        """
+        Remove and return the non-virtualchain-reserved keywords
+        from an op.
+        """
+        return self.remove_reserved_keys( op )[0]
+
     
     def log_pending_ops( self, block_id, ops ):
         """
@@ -514,6 +529,10 @@ class StateEngine( object ):
             
             op_sanitized, reserved = self.remove_reserved_keys( op )
             
+            # pass along txid 
+            if 'virtualchain_txid' in reserved.keys():
+                op_sanitized['virtualchain_txid'] = reserved['virtualchain_txid']
+
             rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op_sanitized, db_state=self.state )
             if rc:
                 # good to go 
@@ -535,25 +554,44 @@ class StateEngine( object ):
         
         This method calls the implementation's 'db_commit' method to 
         add parsed and checked opcodes.
+
+        Returns the list of new name records on success, in order of operation in pending_ops.
         """
         
         op_order = self.op_order
         if op_order is None:
             op_order = pending_ops.keys()
         
+        new_namerecs = {}
+
         for opcode in op_order:
             
             op_list = pending_ops[ opcode ]
+            new_namerecs[opcode] = []
             for op in op_list:
                 
                 op_sanitized, op_reserved = self.remove_reserved_keys( op )
-                
-                self.impl.db_commit( block_id, opcode, op_sanitized, db_state=self.state )
+               
+                namerec = self.impl.db_commit( block_id, opcode, op_sanitized, op_reserved['virtualchain_txid'], db_state=self.state )
+
+                if namerec is not None:
+                    namerec.update( op_reserved )
+                    new_namerecs[opcode].append( namerec )
+
+                else:
+                    raise Exception("BUG: db_commit hook must return a record to snapshot")
         
-        # final commit 
-        self.impl.db_commit( block_id, None, None, db_state=self.state )
-       
-       
+        # final commit
+        # the implementation has a chance here to feed any extra data into the consensus hash with this call
+        # (e.g. to effect internal state transitions that occur as seconary, holistic consequences to the sequence
+        # of prior operations for this block).
+        final_namerec = self.impl.db_commit( block_id, 'final', None, None, db_state=self.state )
+        if final_namerec is not None:
+            final_namerec['virtualchain_accepted'] = True
+            new_namerecs['final'] = [final_namerec]
+
+        return new_namerecs
+
     
     def process_block( self, block_id, ops ):
         """
@@ -562,7 +600,11 @@ class StateEngine( object ):
         through the implementation, to build up the 
         implementation's state.  Cache the 
         resulting data to disk.
-        
+       
+        Each op in ops is a dict with the following fields defined:
+        * virtualchain_opcode: the 1-byte operation code
+        * virtualchain_txid: the transaction ID
+
         Return the consensus hash for this block.
         Return None on error
         """
@@ -570,11 +612,34 @@ class StateEngine( object ):
         log.debug("Process block %s (%s txs with nulldata)" % (block_id, len(ops)))
         
         pending_ops = self.log_pending_ops( block_id, ops )
-        self.commit_pending_ops( block_id, pending_ops )
+        new_nameops = self.commit_pending_ops( block_id, pending_ops )
+        sanitized_ops = {}
+        rejected_ops = {}
 
-        consensus_hash = self.snapshot( block_id, pending_ops )
-        
-        rc = self.save( block_id, consensus_hash, pending_ops )
+        # remove dead objects 
+        for op in new_nameops.keys():
+
+            sanitized_ops[op] = []
+            for i in xrange(0, len(new_nameops[op]) ):
+
+                if not new_nameops[op][i]['virtualchain_accepted']:
+
+                    # save rejected 
+                    if not rejected_ops.has_key( op ):
+                        rejected_ops[ op ] = [new_nameops[op][i]]
+                    else:
+                        rejected_ops[ op ].append( new_nameops[op][i] )
+
+                    continue 
+
+                op_sanitized, op_reserved = self.remove_reserved_keys( new_nameops[op][i] )
+                sanitized_ops[op].append( op_sanitized )
+
+        # save rejected for subsequent query 
+        self.rejected = rejected_ops 
+
+        consensus_hash = self.snapshot( block_id, sanitized_ops )
+        rc = self.save( block_id, consensus_hash, sanitized_ops )
         if not rc:
             log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
             return None 
@@ -601,7 +666,7 @@ class StateEngine( object ):
         Raise an exception on irrecoverable error--the caller should simply try again.
         """
         
-        first_block_id = self.lastblock 
+        first_block_id = self.lastblock + 1 
         num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
 
         rc = True
@@ -623,17 +688,18 @@ class StateEngine( object ):
                     break 
                 
                 block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
-                
+               
                 # returns: [(block_id, txs)]
                 block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( self.pool, bitcoind_opts, block_ids )
                 
                 # process in order by block ID
                 block_ids_and_txs.sort()
-                
-                log.debug("CONSENSUS(%s): %s" % (first_block_id-1, self.get_consensus_at( first_block_id-1 )) )
-                    
+               
                 for processed_block_id, txs in block_ids_and_txs:
-                    
+
+                    if self.get_consensus_at( processed_block_id ) is not None:
+                        raise Exception("Already processed block %s (%s)" % (processed_block_id, self.get_consensus_at( processed_block_id )) )
+
                     ops = self.parse_block( block_id, txs )
                     consensus_hash = self.process_block( processed_block_id, ops )
                     
@@ -645,7 +711,9 @@ class StateEngine( object ):
                         rc = False
                         log.error("Failed to process block %d" % processed_block_id )
                         break
-                    
+            
+            log.debug("Last block is %s" % self.lastblock )
+
         except:
             
             self.pool.close()
@@ -733,7 +801,15 @@ class StateEngine( object ):
         """
         
         return str(consensus_hash) in self.get_valid_consensus_hashes( block_id )
-      
+     
+
+    def get_rejected_ops( self ):
+        """
+        Get the op --> [operations] dict of rejected
+        operations from the last block processed.
+        """
+        return self.rejected
+
 
 def get_index_range( bitcoind ):
     """
@@ -779,5 +855,4 @@ def get_index_range( bitcoind ):
         start_block = saved_block + 1
 
     return start_block, current_block
-    
     
