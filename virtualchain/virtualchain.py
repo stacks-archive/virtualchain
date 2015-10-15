@@ -167,6 +167,26 @@ def setup_virtualchain(impl_module, testset=False, bitcoind_connection_factory=s
     connect_bitcoind = bitcoind_connection_factory
 
 
+def virtualchain_set_opfields( op, **fields ):
+    """
+    Pass along virtualchain-reserved fields to a virtualchain operation.
+    This layer of indirection is meant to help with future compatibility,
+    so virtualchain implementations do not try to set operation fields
+    directly.
+    """
+
+    # warn about unsupported fields
+    for f in fields.keys():
+        if f not in indexer.RESERVED_KEYS:
+            log.warning("Unsupported virtualchain field '%s'" % f)
+
+    # propagate reserved fields
+    for f in fields.keys():
+        if f in indexer.RESERVED_KEYS:
+            op[f] = fields[f]
+
+    return op
+
 if __name__ == '__main__':
 
     import impl_ref
