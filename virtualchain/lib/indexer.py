@@ -575,11 +575,14 @@ class StateEngine( object ):
                 namerec = self.impl.db_commit( block_id, opcode, op_sanitized, op_reserved['virtualchain_txid'], db_state=self.state )
 
                 if namerec is not None:
-                    namerec.update( op_reserved )
-                    new_namerecs[opcode].append( namerec )
+                    if namerec:
+                        namerec.update( op_reserved )
+                        new_namerecs[opcode].append( namerec )
+                    else:
+                        continue
 
                 else:
-                    raise Exception("BUG: db_commit hook must return a record to snapshot")
+                    raise Exception("BUG: db_commit hook must return a record to snapshot (expected dict, got '%s')" % namerec)
         
         # final commit
         # the implementation has a chance here to feed any extra data into the consensus hash with this call
