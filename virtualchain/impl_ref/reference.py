@@ -116,6 +116,10 @@ def db_commit( block_id, opcode, op, txid, db_state=None ):
    part of the database.  This does *not* need to write 
    the data to persistent storage, since save() will be 
    called once per block processed.
+
+   This method must return either the updated op with the 
+   data to pass on to db_serialize, or False if the op
+   is to be rejected.
    """
    print "\nreference implementation of db_commit\n"
    return False
