@@ -286,6 +286,7 @@ def get_sender_and_amount_in_from_txn( tx, output_index ):
    amount_in = int(prev_tx_output['value']*10**8)
    sender = {
       "script_pubkey": script_pubkey.get('hex'),
+      "script_type": script_pubkey.get('type'),
       "amount": amount_in,
       "addresses": script_pubkey.get('addresses')
    }
@@ -413,7 +414,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
    Returns [(block_number, [txs])], where each tx contains the above.
    """
    
-   nulldata_tx_map = {}    # {block_number: {tx": [tx]}}
+   nulldata_tx_map = {}    # {block_number: {"tx": [tx]}}
    block_bandwidth = {}    # {block_number: {"time": time taken to process, "size": number of bytes}}
    nulldata_txs = []
    
@@ -556,7 +557,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             
             total_in += amount_in 
             
-            # NOTE: senders isn't commutative--will need to preserve order
+            # preserve sender order...
             ordered_senders.append( (input_idx, sender) )
          
          # sort on input_idx, so the list of senders matches the given transaction's list of inputs
@@ -567,7 +568,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          nulldata = get_nulldata( tx )
       
          # extend tx to explicitly record its nulldata (i.e. the virtual chain op),
-         # the list of senders (i.e. their script_pubkey strings and amount paid in),
+         # the list of senders (i.e. their script hexs),
          # and the total amount paid
          tx['nulldata'] = nulldata
          tx['senders'] = senders
