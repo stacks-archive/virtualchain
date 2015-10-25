@@ -39,6 +39,7 @@ import time
 import socket
 import binascii
 import pybitcoin
+import copy
 
 from collections import defaultdict 
 
@@ -59,7 +60,8 @@ RESERVED_KEYS = [
    'virtualchain_fee',
    'virtualchain_block_number',
    'virtualchain_accepted',
-   'virtualchain_txid'
+   'virtualchain_txid',
+   'virtualchain_txindex'
 ]
 
 class StateEngine( object ):
@@ -100,9 +102,6 @@ class StateEngine( object ):
     
     Blocks are processed in order, and transactions within a block are processed in the order in which 
     they appear in it.
-    
-    Each record fed into the state engine will be given the following data:
-    * 'virtualchain_txid':  the transaction ID from which the operation was extracted
     """
     
 
@@ -143,14 +142,22 @@ class StateEngine( object ):
         self.consensus_hashes = initial_snapshots
         self.pending_ops = defaultdict(list)
         self.magic_bytes = magic_bytes 
-        self.opcodes = opcodes
+        self.opcodes = opcodes[:]
         self.state = state
         self.op_order = op_order
         self.impl = impl
         self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
         self.rejected = {}
-        
+
+        if self.op_order is None:
+            self.op_order = self.impl.get_op_processing_order()[:]
+            if self.op_order is None:
+                self.op_order = opcodes
+       
+        # there's always a 'final' operation type, to be processed last
+        self.op_order.append('virtualchain_final')
+
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
         
@@ -358,21 +365,13 @@ class StateEngine( object ):
             
         # serialize each operation 
         hashes = []
-       
-        # fix order 
-        op_order = sorted( pending_ops.keys() )
-        for op in op_order:
+        for nameop in pending_ops['virtualchain_ordered']:
 
-            nameops = pending_ops[op]
-            for nameop in nameops:
-                
-                serialized_record = self.impl.db_serialize( op, nameop, db_state=self.state )
-
-                log.debug("Block %s: '%s'" % (block_id, serialized_record))
-
-                record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
-                hashes.append( record_hash )
-        
+            serialized_record = self.impl.db_serialize( nameop['virtualchain_opcode'], nameop, db_state=self.state )
+            
+            record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
+            hashes.append( record_hash )
+            
         
         # include the previous merkel roots
         # K - 1
@@ -510,91 +509,77 @@ class StateEngine( object ):
         """
         return self.remove_reserved_keys( op )[0]
 
-    
-    def log_pending_ops( self, block_id, ops ):
-        """
-        Given a sequence of parsed operations, stage them 
-        in preparation for adding them to the state engine.
-        This calls the 'db_check' operation in the implementation,
-        to verify whether or not the operation should be 
-        staged or not.
-        
-        Return a dict of a sequence of pending ops, grouped by opcode,
-        and ordered simply by the order in which they appeared in ops.
-        """
-        
-        pending_ops = defaultdict(list)
-        
-        for op in ops:
             
+    def process_ops( self, block_id, ops ):
+        """
+        Given a transaction-ordered sequence of parsed operations,
+        check their validity and give them to the state engine to 
+        effect state changes.
+
+        It calls 'db_check' to validate each operation, and 'db_commit'
+        to add it to the state engine.
+        """
+
+        new_ops = {}
+
+        for op in self.op_order:
+            new_ops[op] = []
+
+        # transaction-ordered listing of accepted operations
+        new_ops['virtualchain_ordered'] = []
+        new_ops['virtualchain_all_ops'] = ops
+
+        # give each op its txindex 
+        for i in xrange(0, len(ops)):
+            ops[i]['virtualchain_txindex'] = i
+
+        for i in xrange(0, len(ops)):
+
+            op = ops[i]
             op_sanitized, reserved = self.remove_reserved_keys( op )
-            
-            # pass along txid 
-            if 'virtualchain_txid' in reserved.keys():
-                op_sanitized['virtualchain_txid'] = reserved['virtualchain_txid']
+            opcode = reserved['virtualchain_opcode']
 
-            rc = self.impl.db_check( block_id, pending_ops, op['virtualchain_opcode'], op_sanitized, db_state=self.state )
+            # check this op...
+            rc = self.impl.db_check( block_id, new_ops, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
             if rc:
-                # good to go 
-                op_sanitized.update( reserved )
-                op_sanitized['virtualchain_accepted'] = True
-                
-                pending_ops[ op_sanitized['virtualchain_opcode'] ].append( op_sanitized )
-            
-            else:
-                op_sanitized['virtualchain_accepted'] = False 
-            
-        return pending_ops
-    
 
-    def commit_pending_ops( self, block_id, pending_ops ):
-        """
-        Given the logged set of pending operations for this block,
-        merge them into the implementation's state.
-        
-        This method calls the implementation's 'db_commit' method to 
-        add parsed and checked opcodes.
+                 # good to commit
+                 new_op = self.impl.db_commit( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
 
-        Returns the list of new name records on success, in order of operation in pending_ops.
-        """
-        
-        op_order = self.op_order
-        if op_order is None:
-            op_order = pending_ops.keys()
-        
-        new_namerecs = {}
+                 if new_op is not None:
+                    if new_op:
+                        
+                        # got the processed op
+                        new_op.update( reserved )
 
-        for opcode in op_order:
-            
-            op_list = pending_ops[ opcode ]
-            new_namerecs[opcode] = []
-            for op in op_list:
-                
-                op_sanitized, op_reserved = self.remove_reserved_keys( op )
-               
-                namerec = self.impl.db_commit( block_id, opcode, op_sanitized, op_reserved['virtualchain_txid'], db_state=self.state )
+                        if not new_ops.has_key(opcode):
+                            new_ops[opcode] = [new_op]
+                        else:
+                            new_ops[opcode].append( new_op )
 
-                if namerec is not None:
-                    if namerec:
-                        namerec.update( op_reserved )
-                        new_namerecs[opcode].append( namerec )
+                        new_ops['virtualchain_ordered'].append( new_op )
+
                     else:
                         continue
 
-                else:
-                    raise Exception("BUG: db_commit hook must return a record to snapshot (expected dict, got '%s')" % namerec)
-        
+                 else:
+                    raise Exception("BUG: db_commit hook must return a record to snapshot (expected dict, got '%s')" % op)
+
+
         # final commit
         # the implementation has a chance here to feed any extra data into the consensus hash with this call
         # (e.g. to effect internal state transitions that occur as seconary, holistic consequences to the sequence
         # of prior operations for this block).
-        final_namerec = self.impl.db_commit( block_id, 'final', None, None, db_state=self.state )
-        if final_namerec is not None:
-            final_namerec['virtualchain_accepted'] = True
-            new_namerecs['final'] = [final_namerec]
+        final_op = self.impl.db_commit( block_id, 'virtualchain_final', None, None, None, db_state=self.state )
+        if final_op is not None:
+            final_op['virtualchain_opcode'] = 'final'
 
-        return new_namerecs
+            new_ops['virtualchain_final'] = [final_op]
+            new_ops['virtualchain_ordered'].append( final_op )
+            new_ops['virtualchain_all_ops'].append( final_op )
 
+        return new_ops
+    
     
     def process_block( self, block_id, ops ):
         """
@@ -604,44 +589,25 @@ class StateEngine( object ):
         implementation's state.  Cache the 
         resulting data to disk.
        
-        Each op in ops is a dict with the following fields defined:
-        * virtualchain_opcode: the 1-byte operation code
-        * virtualchain_txid: the transaction ID
-
         Return the consensus hash for this block.
         Return None on error
         """
         
         log.debug("Process block %s (%s txs with nulldata)" % (block_id, len(ops)))
         
-        pending_ops = self.log_pending_ops( block_id, ops )
-        new_nameops = self.commit_pending_ops( block_id, pending_ops )
-        sanitized_ops = {}
-        rejected_ops = {}
+        new_ops = self.process_ops( block_id, ops )
+        sanitized_ops = {}  # for save()
 
-        # remove dead objects 
-        for op in new_nameops.keys():
+        consensus_hash = self.snapshot( block_id, new_ops )
+
+        for op in new_ops.keys():
 
             sanitized_ops[op] = []
-            for i in xrange(0, len(new_nameops[op]) ):
+            for i in xrange(0, len(new_ops[op])):
 
-                if not new_nameops[op][i]['virtualchain_accepted']:
-
-                    # save rejected 
-                    if not rejected_ops.has_key( op ):
-                        rejected_ops[ op ] = [new_nameops[op][i]]
-                    else:
-                        rejected_ops[ op ].append( new_nameops[op][i] )
-
-                    continue 
-
-                op_sanitized, op_reserved = self.remove_reserved_keys( new_nameops[op][i] )
+                op_sanitized, op_reserved = self.remove_reserved_keys( new_ops[op][i] )
                 sanitized_ops[op].append( op_sanitized )
 
-        # save rejected for subsequent query 
-        self.rejected = rejected_ops 
-
-        consensus_hash = self.snapshot( block_id, sanitized_ops )
         rc = self.save( block_id, consensus_hash, sanitized_ops )
         if not rc:
             log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
