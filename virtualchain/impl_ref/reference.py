@@ -96,7 +96,7 @@ def db_parse( block_id, opcode, op_payload, senders, inputs, outputs, fee, db_st
    return None
 
 
-def db_check( block_id, checked_ops, opcode, op, db_state=None ):
+def db_check( block_id, checked_ops, opcode, op, txid, vtxindex, db_state=None ):
    """
    Given the block ID and a parsed operation, check to see if this is a *valid* operation
    for the purposes of this virtual chain's database.
@@ -110,7 +110,7 @@ def db_check( block_id, checked_ops, opcode, op, db_state=None ):
    return False
    
    
-def db_commit( block_id, opcode, op, txid, db_state=None ):
+def db_commit( block_id, opcode, op, txid, vtxindex, db_state=None ):
    """
    Given a block ID and checked opcode, record it as 
    part of the database.  This does *not* need to write 
