@@ -72,7 +72,7 @@ def get_working_dir():
    home = expanduser("~")
   
    working_dir = None
-   if hasattr( IMPL, "working_dir" ):
+   if hasattr( IMPL, "working_dir" ) and IMPL.working_dir is not None:
        working_dir = IMPL.working_dir
 
    else:
