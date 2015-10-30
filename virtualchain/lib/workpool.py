@@ -63,12 +63,11 @@ def multiprocess_batch_size( bitcoind_opts ):
    return num_workers * worker_batch_size
 
 
-def multiprocess_pool( bitcoind_opts ):
+def multiprocess_pool( bitcoind_opts, initializer=None, initargs=None ):
    """
    Given bitcoind options, create a multiprocess pool 
    for querying it.
    """
    num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
-   return Pool( processes=num_workers )
-
+   return Pool( processes=num_workers, initializer=initializer, initargs=initargs )
     
