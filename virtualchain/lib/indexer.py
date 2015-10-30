@@ -40,6 +40,8 @@ import socket
 import binascii
 import pybitcoin
 import copy
+import shutil
+import time
 
 from collections import defaultdict 
 
@@ -162,7 +164,7 @@ class StateEngine( object ):
         lastblock_filename = config.get_lastblock_filename()
         
         # if we crashed during a commit, try to finish
-        rc = self.commit()
+        rc = self.commit( startup=True )
         if not rc:
            log.error("Failed to commit partial data.  Rolling back.")
            self.rollback()
@@ -213,7 +215,7 @@ class StateEngine( object ):
                     pass
     
     
-    def commit( self ):
+    def commit( self, backup=False, startup=False ):
         """
         Move all written but uncommitted data into place.
         Return True on success 
@@ -221,6 +223,7 @@ class StateEngine( object ):
         
         It is safe to call this method repeatedly until it returns True.
         """
+
         tmp_db_filename = config.get_db_filename() + ".tmp"
         tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
         tmp_lastblock_filename = config.get_lastblock_filename() + ".tmp"
@@ -231,13 +234,33 @@ class StateEngine( object ):
             log.error("Partial write detected.  Not committing.")
             return False
             
+        # basic sanity checks: don't overwrite the db if the file is zero bytes, or if we can't load it
+        if os.path.exists( tmp_db_filename ):
+            sb = os.stat( tmp_db_filename )
+            if sb.st_size == 0:
+                log.error("Partial write detected: tried to overwrite with zero-sized db!  Will rollback.")
+                return False
+
+            if startup:
+                # make sure we can load this 
+                try:
+                    with open(tmp_snapshot_filename, "r") as f:
+                        db_txt = f.read()
+
+                    db_json = json.loads(db_txt)
+                except:
+                    log.error("Partial write detected: corrupt partially-committed db!  Will rollback.")
+                    return False
+
         
+        backup_time = int(time.time() * 1000000)
+
         for tmp_filename, filename in zip( [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
                                            [config.get_lastblock_filename(), config.get_snapshots_filename(), config.get_db_filename()] ):
                
             if not os.path.exists( tmp_filename ):
-                continue 
-            
+                continue  
+
             # commit our new lastblock, consensus hash set, and state engine data
             try:
                
@@ -248,8 +271,12 @@ class StateEngine( object ):
                      os.unlink( filename )
                   except:
                      pass
-               
-               os.rename( tmp_filename, filename )
+
+               if not backup:
+                   os.rename( tmp_filename, filename )
+               else:
+                   shutil.copy( tmp_filename, filename )
+                   os.rename( tmp_filename, tmp_filename + (".%s" % backup_time))
                   
             except Exception, e:
                
@@ -259,7 +286,7 @@ class StateEngine( object ):
         return True
         
     
-    def save( self, block_id, consensus_hash, pending_ops ):
+    def save( self, block_id, consensus_hash, pending_ops, backup=False ):
         """
         Write out all state to the working directory.
         Calls the implementation's 'db_save' method.
@@ -274,9 +301,9 @@ class StateEngine( object ):
            raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
         
         # stage data to temporary files
-        tmp_db_filename = config.get_db_filename() + ".tmp"
-        tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
-        tmp_lastblock_filename = config.get_lastblock_filename() + ".tmp"
+        tmp_db_filename = (config.get_db_filename() + ".tmp")
+        tmp_snapshot_filename = (config.get_snapshots_filename() + ".tmp")
+        tmp_lastblock_filename = (config.get_lastblock_filename() + ".tmp")
         
         with open(tmp_snapshot_filename, 'w') as f:
             db_dict = {
@@ -306,8 +333,8 @@ class StateEngine( object ):
                 pass 
             
             return False
-        
-        rc = self.commit()
+       
+        rc = self.commit( backup=backup )
         if not rc:
             log.error("Failed to commit data at block %s.  Rolling back." % block_id )
             
@@ -318,14 +345,45 @@ class StateEngine( object ):
             self.lastblock = block_id
             return True
     
-    
+   
+    @classmethod
     def calculate_consensus_hash( self, merkle_root ):
         """
         Given the Merkle root of the set of records processed, calculate the consensus hash.
         """
         return binascii.hexlify( pybitcoin.hash.bin_hash160(merkle_root, True)[0:16])
 
-    
+   
+    @classmethod
+    def make_snapshot( cls, serialized_ops, prev_consensus_hashes ):
+        """
+        Generate a consensus hash, using the tx-ordered list of serialized name 
+        operations, and a list of previous consensus hashes that contains
+        the (k-1)th, (k-2)th; (k-3)th; ...; (k - (2**i - 1))th consensus hashes, 
+        all the way back to the beginning of time (prev_consensus_hashes[i] is the 
+        (k - (2**(i+1) - 1))th consensus hash)
+        """
+
+        record_hashes = []
+        for serialized_op in serialized_ops:
+            record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_op ) )
+            record_hashes.append( record_hash )
+
+        # put records into their own Merkle tree, and mix the root with the consensus hashes.
+        record_hashes.sort()
+        record_merkle_tree = pybitcoin.MerkleTree( record_hashes )
+        record_root_hash = record_merkle_tree.root()
+
+        # mix into previous consensus hashes...
+        all_hashes = prev_consensus_hashes[:] + [record_root_hash]
+        all_hashes.sort()
+        all_hashes_merkle_tree = pybitcoin.MerkleTree( all_hashes )
+        root_hash = all_hashes_merkle_tree.root()
+
+        consensus_hash = StateEngine.calculate_consensus_hash( root_hash )
+        return consensus_hash 
+
+
     def snapshot( self, block_id, pending_ops ):
         """
         Given the currnet block ID and the set of operations committed,
@@ -337,6 +395,7 @@ class StateEngine( object ):
         * block K - 2 - 1's consensus hash 
         * block K - 4 - 2 - 1's consensus hash, 
         ...
+        * block K - (2**i - 1)'s consensus hash
         
         The purpose of this construction is that it reduces the number of queries 
         a client needs to verify the integrity of previously-processed operations
@@ -358,39 +417,21 @@ class StateEngine( object ):
         
         log.debug("Snapshotting block %s" % (block_id) )
         
-        previous_consensus_hash = self.get_consensus_at( block_id - 1 )
-        if previous_consensus_hash is None:
-            # NULL consensus hash 
-            previous_consensus_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( "" ) )
-            
-        # serialize each operation 
-        hashes = []
+        serialized_ops = []
         for nameop in pending_ops['virtualchain_ordered']:
-
             serialized_record = self.impl.db_serialize( nameop['virtualchain_opcode'], nameop, db_state=self.state )
-            
-            record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_record ) )
-            hashes.append( record_hash )
-            
-        
-        # include the previous merkel roots
-        # K - 1
-        hashes.append( previous_consensus_hash )
-        
-        # K - 2 - 1 and previous
-        K = block_id - self.impl.get_first_block_id()
-        past = 3
+            serialized_ops.append( serialized_record )
+
+        previous_consensus_hashes = []
+        k = block_id
         i = 1
-        while K - past > 0:
-            hashes.append( self.get_consensus_at( K - past + self.impl.get_first_block_id() ) )
-            past += (2 << i)
+        while k - (2**i - 1) >= self.impl.get_first_block_id():
+            prev_ch = self.get_consensus_at( k - (2**i - 1) )
+            previous_consensus_hashes.append( prev_ch )
             i += 1
-           
-        hashes.sort()
-        merkle_tree = pybitcoin.MerkleTree( hashes )
-        root_hash = merkle_tree.root()
-        
-        consensus_hash = self.calculate_consensus_hash( root_hash )
+
+        consensus_hash = StateEngine.make_snapshot( serialized_ops, previous_consensus_hashes )
+
         self.consensus_hashes[ str(block_id) ] = consensus_hash 
         
         return consensus_hash
@@ -581,7 +622,7 @@ class StateEngine( object ):
         return new_ops
     
     
-    def process_block( self, block_id, ops ):
+    def process_block( self, block_id, ops, backup=False ):
         """
         Top-level block processing method.
         Feed the block and its OP_RETURN transactions 
@@ -608,13 +649,16 @@ class StateEngine( object ):
                 op_sanitized, op_reserved = self.remove_reserved_keys( new_ops[op][i] )
                 sanitized_ops[op].append( op_sanitized )
 
-        rc = self.save( block_id, consensus_hash, sanitized_ops )
+        rc = self.save( block_id, consensus_hash, sanitized_ops, backup=backup )
         if not rc:
             log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
             return None 
         
         return consensus_hash
 
+    @classmethod 
+    def __delete_me( cls, s ):
+        del s
 
     def build( self, bitcoind_opts, end_block_id ):
         """
@@ -639,7 +683,10 @@ class StateEngine( object ):
         num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
 
         rc = True
-        self.pool = workpool.multiprocess_pool( bitcoind_opts )
+
+        # the state can be big.  don't pass it to the slave processes
+        free_memory = self.__delete_me
+        self.pool = workpool.multiprocess_pool( bitcoind_opts, initializer=free_memory, initargs=[self.state] )
         
         try:
             
