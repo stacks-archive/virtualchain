@@ -51,7 +51,7 @@ running = False
 
 # global factory method for connecting to bitcoind
 # (can be overwritten to mock a blockchain)
-connect_bitcoind = session.connect_bitcoind
+connect_bitcoind = None
 
 def sync_virtualchain(bitcoind_opts, last_block, state_engine):
     """
@@ -133,6 +133,9 @@ def run_virtualchain():
         bitcoin_opts[k] = v
 
     log.debug("multiprocessing config = (%s, %s)" % (config.configure_multiprocessing(bitcoin_opts)))
+
+    if connect_bitcoind is None:
+        connect_bitcoind = session.connect_bitcoind 
 
     try:
 
