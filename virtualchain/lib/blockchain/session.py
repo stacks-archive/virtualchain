@@ -53,14 +53,15 @@ if not hasattr( ssl, "create_default_context" ):
    create_ssl_authproxy = False
    do_wrap_socket = True
 
-log = logging.getLogger()
-log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-console = logging.StreamHandler()
-console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
-formatter = logging.Formatter( log_format )
-console.setFormatter(formatter)
-log.addHandler(console)
+if not globals().has_key('log'):
+    log = logging.getLogger()
+    log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+    log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
+    formatter = logging.Formatter( log_format )
+    console.setFormatter(formatter)
+    log.addHandler(console)
 
 from bitcoinrpc.authproxy import AuthServiceProxy
 
