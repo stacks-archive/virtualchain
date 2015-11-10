@@ -353,26 +353,34 @@ class StateEngine( object ):
         """
         return binascii.hexlify( pybitcoin.hash.bin_hash160(merkle_root, True)[0:16])
 
-   
-    @classmethod
-    def make_snapshot( cls, serialized_ops, prev_consensus_hashes ):
+  
+    @classmethod 
+    def make_ops_snapshot( cls, serialized_ops ):
         """
-        Generate a consensus hash, using the tx-ordered list of serialized name 
-        operations, and a list of previous consensus hashes that contains
-        the (k-1)th, (k-2)th; (k-3)th; ...; (k - (2**i - 1))th consensus hashes, 
-        all the way back to the beginning of time (prev_consensus_hashes[i] is the 
-        (k - (2**(i+1) - 1))th consensus hash)
+        Generate a deterministic hash over the sequence of (serialized) operations.
         """
-
         record_hashes = []
         for serialized_op in serialized_ops:
             record_hash = binascii.hexlify( pybitcoin.hash.bin_double_sha256( serialized_op ) )
             record_hashes.append( record_hash )
 
+        if len(record_hashes) == 0:
+            record_hashes.append( binascii.hexlify( pybitcoin.hash.bin_double_sha256( "" ) ) )
+
         # put records into their own Merkle tree, and mix the root with the consensus hashes.
         record_hashes.sort()
         record_merkle_tree = pybitcoin.MerkleTree( record_hashes )
         record_root_hash = record_merkle_tree.root()
+
+        return record_root_hash
+
+
+    @classmethod 
+    def make_snapshot_from_ops_hash( cls, record_root_hash, prev_consensus_hashes ):
+        """
+        Generate the consensus hash from the hash over the current ops, and 
+        all previous required consensus hashes.
+        """
 
         # mix into previous consensus hashes...
         all_hashes = prev_consensus_hashes[:] + [record_root_hash]
@@ -384,12 +392,27 @@ class StateEngine( object ):
         return consensus_hash 
 
 
+    @classmethod
+    def make_snapshot( cls, serialized_ops, prev_consensus_hashes ):
+        """
+        Generate a consensus hash, using the tx-ordered list of serialized name 
+        operations, and a list of previous consensus hashes that contains
+        the (k-1)th, (k-2)th; (k-3)th; ...; (k - (2**i - 1))th consensus hashes, 
+        all the way back to the beginning of time (prev_consensus_hashes[i] is the 
+        (k - (2**(i+1) - 1))th consensus hash)
+        """
+
+        record_root_hash = StateEngine.make_ops_snapshot( serialized_ops )
+        log.debug("Snapshot('%s', %s)" % (record_root_hash, prev_consensus_hashes))
+        return cls.make_snapshot_from_ops_hash( record_root_hash, prev_consensus_hashes )
+
+
     def snapshot( self, block_id, pending_ops ):
         """
         Given the currnet block ID and the set of operations committed,
         find the consensus hash that represents the state of the virtual chain.
         
-        The consensus hash is calculated as a "Merkle skip-list."  It incorporates:
+        The consensus hash is calculated as a Merkle skip-list.  It incorporates:
         * block K's operations 
         * block K - 1's consensus hash 
         * block K - 2 - 1's consensus hash 
@@ -500,6 +523,7 @@ class StateEngine( object ):
         op['virtualchain_block_number'] = block_id
         op['virtualchain_accepted'] = False       # not yet accepted
         op['virtualchain_txid'] = tx['txid']
+        op['virtualchain_txindex'] = tx['txindex']
         
         return op
    
@@ -569,10 +593,6 @@ class StateEngine( object ):
         # transaction-ordered listing of accepted operations
         new_ops['virtualchain_ordered'] = []
         new_ops['virtualchain_all_ops'] = ops
-
-        # give each op its txindex 
-        for i in xrange(0, len(ops)):
-            ops[i]['virtualchain_txindex'] = i
 
         for i in xrange(0, len(ops)):
 
