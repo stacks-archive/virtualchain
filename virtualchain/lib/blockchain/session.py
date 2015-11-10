@@ -111,7 +111,6 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
            connection = BitcoindConnection( server, int(port), timeout=300 )
            ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
            
-           
         elif create_ssl_authproxy:
            # ssl has _create_unverified_context, so we're good to go 
            ret = AuthServiceProxy(authproxy_config_uri, timeout=300)
