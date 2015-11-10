@@ -404,6 +404,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
    * vin (list of inputs from bitcoind)
    * vout (list of outputs from bitcoind)
    * txid (transaction ID, as a hex string)
+   * txindex (transaction index in the block)
    * senders (a list of {"script_pubkey":, "amount":, and "addresses":} dicts; the "script_pubkey" field is the hex-encoded op script).
    * fee (total amount sent)
    * nulldata (input data to the transaction's script; encodes virtual chain operations)
@@ -644,8 +645,12 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          tx_list = nulldata_tx_map[ block_number ]     # [(tx_index, tx)]
          tx_list.sort()                                # sorts on tx_index--preserves order in the block
          
+         # preserve index
+         for (tx_index, tx) in tx_list:
+             tx['txindex'] = tx_index
+
          txs = [ tx for (_, tx) in tx_list ]
-         
+
       nulldata_txs.append( (block_number, txs) )
       
    return nulldata_txs
