@@ -74,7 +74,7 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine):
         try:
 
             # advance state
-            state_engine.build(bitcoind_opts, last_block+1)
+            indexer.StateEngine.build(bitcoind_opts, last_block+1, state_engine)
             break
 
         except Exception, e:
@@ -107,7 +107,7 @@ def stop_virtualchain():
     running = False
 
 
-def run_virtualchain():
+def run_virtualchain( state_engine ):
 
     """
     Continuously and periodically feed new blocks into the state engine.
@@ -151,7 +151,7 @@ def run_virtualchain():
     while running:
 
         # keep refreshing the index
-        sync_virtualchain(bitcoin_opts, last_block_id)
+        sync_virtualchain(bitcoin_opts, last_block_id, state_engine )
 
         time.sleep(config.REINDEX_FREQUENCY)
 
