@@ -140,7 +140,7 @@ def configure_multiprocessing( bitcoind_opts ):
    Return (number of processes, number of blocks per process)
    Return (None, None) if we could make no inferences from the bitcoind opts.
    """
-   
+
    if bitcoind_opts is None:
       return (None, None)
   
@@ -152,11 +152,11 @@ def configure_multiprocessing( bitcoind_opts ):
    
    if bitcoind_opts["bitcoind_server"] in ["localhost", "127.0.0.1", "::1"]:
       # running locally 
-      return (1, 64)
+      return (1, 10)
    
    else:
       # running remotely 
-      return (8, 8)
+      return (10, 1)
    
 
 def get_bitcoind_config( config_file=None ):
