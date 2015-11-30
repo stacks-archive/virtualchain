@@ -38,7 +38,12 @@ import threading
 import time
 import socket
 
-from ..config import DEBUG
+try:
+   from ..config import DEBUG
+except:
+   # running as an indexer worker
+   from virtualchain.lib.config import DEBUG
+
 from utilitybelt import is_valid_int
 from ConfigParser import SafeConfigParser
 
