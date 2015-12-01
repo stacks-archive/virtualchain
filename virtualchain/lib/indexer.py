@@ -42,14 +42,15 @@ import pybitcoin
 import copy
 import shutil
 import time
+import traceback
+import cPickle as pickle
 
 from collections import defaultdict 
 
 import config
 import workpool
-from .blockchain import transactions, session 
-from multiprocessing import Pool
-from ..impl_ref import reference            # default no-op state engine implementation
+import blockchain.transactions as transactions
+import blockchain.session as session
 
 from utilitybelt import is_hex
 
@@ -676,11 +677,66 @@ class StateEngine( object ):
         
         return consensus_hash
 
-    @classmethod 
-    def __delete_me( cls, s ):
-        del s
 
-    def build( self, bitcoind_opts, end_block_id ):
+    def free_indexer_memory(self):
+        """
+        Optimization: remove unnecessary data for the indexer process.
+        """
+        del self.consensus_hashes
+        del self.pending_ops
+        del self.magic_bytes 
+        del self.opcodes
+        del self.state
+        del self.op_order
+        del self.impl
+        del self.rejected
+
+
+    @classmethod 
+    def workpool_worker_startup( cls, s ):
+        """
+        Initialize a worker indexer
+        """
+        s.free_indexer_memory()
+
+
+    def start_workpool( self, bitcoind_opts ):
+        """
+        Make a work pool for ourselves.
+        Raise an exception if one already exists.
+        NOT THREAD SAFE
+        """
+        if self.pool is not None:
+            raise Exception("Already indexing")
+
+        self.pool = workpool.multiprocess_pool( bitcoind_opts, os.path.abspath( __file__ ) )
+        return True
+
+
+    def stop_workpool(self):
+        """
+        Make sure our workpool is stopped.
+        NOT THREAD SAFE
+        """
+        if self.pool is None:
+            return 
+
+        self.pool.close()
+        self.pool.terminate()
+        self.pool.join()
+        self.pool = None
+        return True
+
+     
+    def get_workpool(self):
+        """
+        Get our workpool
+        """
+        return self.pool
+
+
+    @classmethod
+    def build( cls, bitcoind_opts, end_block_id, state_engine ):
         """
         Top-level call to process all blocks in the blockchain.
         Goes and fetches all OP_RETURN nulldata in order,
@@ -699,14 +755,12 @@ class StateEngine( object ):
         Raise an exception on irrecoverable error--the caller should simply try again.
         """
         
-        first_block_id = self.lastblock + 1 
+        first_block_id = state_engine.lastblock + 1 
         num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
 
         rc = True
 
-        # the state can be big.  don't pass it to the slave processes
-        free_memory = self.__delete_me
-        self.pool = workpool.multiprocess_pool( bitcoind_opts, initializer=free_memory, initargs=[self.state] )
+        state_engine.start_workpool( bitcoind_opts )
         
         try:
             
@@ -717,7 +771,7 @@ class StateEngine( object ):
                 if not rc:
                     break 
                 
-                if self.pool is None:
+                if state_engine.get_workpool() is None:
                     # interrupted 
                     log.debug("Build interrupted")
                     rc = False
@@ -726,20 +780,20 @@ class StateEngine( object ):
                 block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
                
                 # returns: [(block_id, txs)]
-                block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( self.pool, bitcoind_opts, block_ids )
+                block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( state_engine.get_workpool(), bitcoind_opts, block_ids )
                 
                 # process in order by block ID
                 block_ids_and_txs.sort()
                
                 for processed_block_id, txs in block_ids_and_txs:
 
-                    if self.get_consensus_at( processed_block_id ) is not None:
-                        raise Exception("Already processed block %s (%s)" % (processed_block_id, self.get_consensus_at( processed_block_id )) )
+                    if state_engine.get_consensus_at( processed_block_id ) is not None:
+                        raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
 
-                    ops = self.parse_block( block_id, txs )
-                    consensus_hash = self.process_block( processed_block_id, ops )
+                    ops = state_engine.parse_block( block_id, txs )
+                    consensus_hash = state_engine.process_block( processed_block_id, ops )
                     
-                    log.debug("CONSENSUS(%s): %s" % (processed_block_id, self.get_consensus_at( processed_block_id )))
+                    log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
                     
                     if consensus_hash is None:
                         
@@ -748,20 +802,14 @@ class StateEngine( object ):
                         log.error("Failed to process block %d" % processed_block_id )
                         break
             
-            log.debug("Last block is %s" % self.lastblock )
+            log.debug("Last block is %s" % state_engine.lastblock )
 
         except:
             
-            self.pool.close()
-            self.pool.terminate()
-            self.pool.join()
-            self.pool = None
+            state_engine.stop_workpool()
             raise
-        
-        self.pool.close()
-        self.pool.terminate()
-        self.pool.join()
-        self.pool = None
+       
+        state_engine.stop_workpool()
         return rc
     
     
@@ -774,26 +822,28 @@ class StateEngine( object ):
         this method will do nothing.
         """
         
-        log.debug("Stop building")
-        
-        if self.pool is not None:
-            try:
-                # NOTE: a bit racy--self.pool might be None 
-                self.pool.close()
-                self.pool.terminate()
-                self.pool.join()
-                self.pool = None 
-                
-            except:
-                pass 
-            
-        
-       
+        log.debug("%s: Stop building" % os.getpid())
+        self.stop_workpool()
+      
+
     def get_consensus_at( self, block_id ):
         """
         Get the consensus hash at a given block
         """
         return self.consensus_hashes.get( str(block_id), None )
+
+
+    def get_block_from_consensus( self, consensus_hash ):
+        """
+        Get the block number with the given consensus hash.
+        Return None if there is no such block.
+        """
+        # NOTE: not the most efficient thing here...
+        for (block_id, ch) in self.consensus_hashes.iteritems():
+            if str(ch) == str(consensus_hash):
+                return int(block_id)
+
+        return None
 
 
     def get_valid_consensus_hashes( self, block_id ):
@@ -891,4 +941,28 @@ def get_index_range( bitcoind ):
         start_block = saved_block + 1
 
     return start_block, current_block
-    
+
+
+def indexer_main_loop_body( key, payload ):
+    """
+    Worker main loop: parse a blockchain RPC
+    call and dispatch it.
+    """
+    method_name, method_args = workpool.multiprocess_rpc_unmarshal( payload )
+
+    if len(method_args) == 0:
+       log.error("No method given")
+       return {"error": "No method given"}
+
+    result = transactions.indexer_rpc_dispatch( method_name, method_args )
+
+    workpool.Workpool.worker_post_message( key, pickle.dumps( result ) )
+
+
+# Entry point for workers 
+# (this file serves as the program to run, if running as a worker)
+if __name__ == "__main__":
+
+    log.debug("Worker %s starting" % (os.getpid()))
+    workpool.multiprocess_worker_main( indexer_main_loop_body )
+

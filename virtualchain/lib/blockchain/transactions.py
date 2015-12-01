@@ -24,19 +24,31 @@
 from .nulldata import get_nulldata, has_nulldata
 import traceback
 
-from ..config import DEBUG, MULTIPROCESS_RPC_RETRY
-from ..workpool import multiprocess_bitcoind, multiprocess_batch_size
+import sys 
+
+try:
+   from ..config import MULTIPROCESS_RPC_RETRY
+   from ..workpool import multiprocess_bitcoind, multiprocess_batch_size, multiprocess_rpc_marshal, multiprocess_bitcoind_opts, Workpool
+except:
+   # running as worker subprocess
+   from virtualchain.lib.config import MULTIPROCESS_RPC_RETRY
+   from virtualchain.lib.workpool import multiprocess_bitcoind, multiprocess_batch_size, multiprocess_rpc_marshal, multiprocess_bitcoind_opts, Workpool
 
 import logging
 import os
 import time
 import types
 import random
+import copy
+import cPickle as pickle
 
 from bitcoinrpc.authproxy import JSONRPCException
 
 import session 
 log = session.log 
+
+# bitcoind options inherited from the parent
+g_bitcoind_opts = None
 
 def get_bitcoind( bitcoind_or_opts ):
    """
@@ -44,9 +56,16 @@ def get_bitcoind( bitcoind_or_opts ):
    or a dictionary of options to generate one in a
    process-local context, return a bitcoind API endpoint 
    proxy.
-   """
+   """ 
    
-   if type(bitcoind_or_opts) == types.DictType:
+   global g_bitcoind_opts
+
+   if type(bitcoind_or_opts) == types.DictType or bitcoind_or_opts is None:
+
+      # instantiate from options
+      if bitcoind_or_opts is None:
+          bitcoind_or_opts = multiprocess_bitcoind_opts()
+
       return multiprocess_bitcoind( bitcoind_or_opts )
    
    else:
@@ -69,6 +88,44 @@ def get_bitcoind_opts( bitcoind_or_opts ):
       return bitcoind_or_opts.opts 
    
 
+def indexer_rpc_dispatch( method_name, method_args ):
+   """
+   Worker subprocess: dispatch a method call from the 
+   main indexer process and get the result.
+   """
+
+   if method_name == "getrawtransaction":
+
+       if len(method_args) != 3:
+           log.error("getrawtransaction: Invalid argument list")
+           return {"error": "getrawtransaction: Invalid argument list"}
+
+       result = getrawtransaction( method_args[0], method_args[1], verbose=method_args[2] )
+ 
+   elif method_name == "getblockhash":
+       
+       if len(method_args) != 3:
+           log.error("getblockhash: Invalid argument list")
+           return {"error": "getblockhash: Invalid argument list"}
+
+       result = getblockhash( method_args[0], method_args[1], reset=method_args[2] )
+
+   elif method_name == "getblock":
+       
+       if len(method_args) != 2:
+           log.error("getblock: Invalid argument list")
+           return {"error": "getblock: Invalid argument list"}
+
+       result = getblock( method_args[0], method_args[1] )
+
+   else:
+
+       log.error("Unrecognized method")
+       return {"error": "Unrecognized method"}
+
+   return result
+
+
 def getrawtransaction( bitcoind_or_opts, txid, verbose=0 ):
    """
    Get a raw transaction by txid.
@@ -77,8 +134,8 @@ def getrawtransaction( bitcoind_or_opts, txid, verbose=0 ):
    
    exc_to_raise = None
    bitcoind = get_bitcoind( bitcoind_or_opts )
-   
-   if bitcoind_or_opts is None:
+
+   if bitcoind is None and bitcoind_or_opts is None:
        raise Exception("No bitcoind or opts given")
    
    for i in xrange(0, MULTIPROCESS_RPC_RETRY):
@@ -92,16 +149,14 @@ def getrawtransaction( bitcoind_or_opts, txid, verbose=0 ):
             log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
             exc_to_raise = je
             
-            new_opts = get_bitcoind_opts( bitcoind_or_opts )
-            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
+            bitcoind = multiprocess_bitcoind( bitcoind.opts, reset=True)
             continue
 
          except Exception, e:
             log.error("\n\n[%s] Caught Exception from bitcoind: %s" % (os.getpid(), repr(e)))
             exc_to_raise = e
         
-            new_opts = get_bitcoind_opts( bitcoind_or_opts )
-            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
+            bitcoind = multiprocess_bitcoind( bitcoind.opts, reset=True)
             continue 
             
          return tx 
@@ -119,14 +174,19 @@ def getrawtransaction( bitcoind_or_opts, txid, verbose=0 ):
       raise Exception("Failed after %s attempts" % MULTIPROCESS_RPC_RETRY)
 
 
+
 def getrawtransaction_async( workpool, bitcoind_opts, tx_hash, verbose ):
    """
    Get a block transaction, asynchronously, using the pool of processes
    to go get it.
    """
-   
-   tx_result = workpool.apply_async( getrawtransaction, (bitcoind_opts, tx_hash, verbose) )
-   return tx_result
+
+   payload = multiprocess_rpc_marshal( "getrawtransaction", [None, tx_hash, verbose] )
+
+   # log.debug("getrawtransaction_async %s" % tx_hash)
+   tx_future = workpool.apply_async( payload )
+
+   return tx_future
 
 
 def getblockhash( bitcoind_or_opts, block_number, reset ):
@@ -134,11 +194,12 @@ def getblockhash( bitcoind_or_opts, block_number, reset ):
    Get a block's hash, given its ID.
    Return None if there are no options
    """
-   
+  
+
    exc_to_raise = None  # exception to raise if we fail
    bitcoind = get_bitcoind( bitcoind_or_opts )
    
-   if bitcoind_or_opts is None:
+   if not reset and bitcoind is None and bitcoind_or_opts is None:
        raise Exception("No bitcoind or opts given")
        
    if reset:
@@ -155,19 +216,14 @@ def getblockhash( bitcoind_or_opts, block_number, reset ):
             log.error("\n\n[%s] Caught JSONRPCException from bitcoind: %s\n" % (os.getpid(), repr(je.error)))
             exc_to_raise = je 
         
-            new_opts = get_bitcoind_opts( bitcoind_or_opts )
-            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
+            bitcoind = multiprocess_bitcoind( bitcoind.opts, reset=True)
             continue
          
          except Exception, e:
             log.error("\n\n[%s] Caught Exception from bitcoind: %s" % (os.getpid(), repr(e)))
             exc_to_raise = e
             
-            new_opts = get_bitcoind_opts( bitcoind_or_opts )
-            if new_opts is None:
-                raise Exception("No bitcoind or opts given")
-            
-            bitcoind = multiprocess_bitcoind( new_opts, reset=True)
+            bitcoind = multiprocess_bitcoind( bitcoind.opts, reset=True)
             continue 
          
          return block_hash
@@ -189,9 +245,11 @@ def getblockhash_async( workpool, bitcoind_opts, block_number, reset=False ):
    Get a block's hash, asynchronously, given its ID
    Return a future to the block hash 
    """
-   
-   block_hash_future = workpool.apply_async( getblockhash, (bitcoind_opts, block_number, reset) )
-   log.debug("getblockhash_async %s" % block_number)
+ 
+   payload = multiprocess_rpc_marshal( "getblockhash", [None, block_number, reset] )
+
+   log.debug("Get block hash for %s" % block_number)
+   block_hash_future = workpool.apply_async( payload )
    
    return block_hash_future
 
@@ -200,7 +258,9 @@ def getblock( bitcoind_or_opts, block_hash ):
    """
    Get a block's data, given its hash.
    """
-   if bitcoind_or_opts is None:
+   
+   bitcoind = get_bitcoind( bitcoind_or_opts )
+   if bitcoind is None and bitcoind_or_opts is None:
        raise Exception("No bitcoind or opts given")
     
    exc_to_raise = None
@@ -222,8 +282,7 @@ def getblock( bitcoind_or_opts, block_hash ):
          # exponential backof with jitter
          time.sleep(2**attempts + random.randint( 0, 2**(attempts - 1)) )
          
-         new_opts = get_bitcoind_opts( bitcoind_or_opts )
-         bitcoind = multiprocess_bitcoind( new_opts, reset=True)
+         bitcoind = multiprocess_bitcoind( bitcoind.opts, reset=True)
          continue
      
       except Exception, e:
@@ -236,8 +295,7 @@ def getblock( bitcoind_or_opts, block_hash ):
          # exponential backoff with jitter
          time.sleep(2**attempts + random.randint( 0, 2**(attempts - 1)) )
          
-         new_opts = get_bitcoind_opts( bitcoind_or_opts )
-         bitcoind = multiprocess_bitcoind( new_opts, reset=True)
+         bitcoind = multiprocess_bitcoind( bitcoind.opts, reset=True)
          continue
    
       return block_data 
@@ -255,7 +313,11 @@ def getblock_async( workpool, bitcoind_opts, block_hash ):
    Get a block's data, given its hash.
    Return a future to the data.
    """
-   block_future = workpool.apply_async( getblock, (bitcoind_opts, block_hash) )
+
+   payload = multiprocess_rpc_marshal( "getblock", [None, block_hash] )
+
+   log.debug("Get block %s" % block_hash)
+   block_future = workpool.apply_async( payload )
    return block_future 
 
 
@@ -272,7 +334,7 @@ def get_sender_and_amount_in_from_txn( tx, output_index ):
    try:
       prev_tx_output = tx['vout'][output_index]
    except Exception, e:
-      print "output_index = '%s'" % output_index
+      print >> sys.stderr, "output_index = '%s'" % output_index
       raise e
 
    # make sure the previous tx output is valid
@@ -347,7 +409,6 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, tx ):
 
 
 def future_next( fut_records, fut_inspector ):
-   
    """
    Find and return a record in a list of records, whose 
    contained future (obtained by the callable fut_inspector)
@@ -359,6 +420,7 @@ def future_next( fut_records, fut_inspector ):
    
    if len(fut_records) == 0:
       return None 
+  
    
    for fut_record in fut_records:
       fut = fut_inspector( fut_record )
@@ -366,19 +428,29 @@ def future_next( fut_records, fut_inspector ):
          if fut.ready():
             fut_records.remove( fut_record )
             return fut_record 
-      
-   # no ready futures.  wait for one 
-   for fut_record in fut_records:
-      fut = fut_inspector( fut_record )
-      if fut is not None:
-         
-         # NOTE: interruptable
-         fut.wait( 10000000000000000L )
-         
-         fut_records.remove( fut_record )
-         return fut_record
    
+   # no ready futures.  wait for one
+   i = 0
+   while True:
+       fut_record = fut_records[i % len(fut_records)]
+       i += 1
+
+       fut = fut_inspector( fut_record )
+       if fut is not None:
+
+          # block...
+          fut.wait( 0.1 )
+          fut_records.remove( fut_record )
+          return fut_record 
    
+
+def future_get_result( fut, timeout ):
+   """
+   Get the *unpickled* result of a future
+   """
+   result = fut.get( timeout )
+   return pickle.loads( result )
+
 
 def get_block_goodput( block_data ):
    """
@@ -437,14 +509,13 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          break
       
       start_slice_time = time.time()
-      
+     
       # get all block hashes 
       for block_number in block_slice:
          
          block_times[block_number] = time.time() 
          
-         # NOTE: force re-connect, since the previous connection will have expired if we take a while to process all nulldata 
-         block_hash_fut = getblockhash_async( workpool, bitcoind_opts, block_number, reset=True )
+         block_hash_fut = getblockhash_async( workpool, bitcoind_opts, block_number )
          block_hash_futures.append( (block_number, block_hash_fut) )
    
    
@@ -457,10 +528,9 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          block_number, block_hash_fut = future_next( block_hash_futures, lambda f: f[1] )
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
-         block_hash = block_hash_fut.get( 10000000000000000L )
+         block_hash = future_get_result( block_hash_fut, 10000000000000000L )
         
          if block_hash is not None:
-             log.debug("getblock_async %s %s" % (block_number, block_hash))
              block_data_fut = getblock_async( workpool, bitcoind_opts, block_hash )
              block_data_futures.append( (block_number, block_data_fut) )
 
@@ -470,7 +540,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       
       block_data_time_start = time.time()
       block_data_time_end = 0
-      
+     
       # coalesce block data, and get tx hashes 
       for i in xrange(0, len(block_data_futures)):
          
@@ -478,7 +548,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          block_hash_time_end = time.time()
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
-         block_data = block_data_fut.get( 10000000000000000L )
+         block_data = future_get_result( block_data_fut, 1000000000000000L )
          
          if 'tx' not in block_data:
             log.error("tx not in block data of %s" % block_number)
@@ -486,12 +556,11 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          
          tx_hashes = block_data['tx']
          
-         log.debug("Get %s transactions from block %d" % (len(tx_hashes), block_number))
+         log.debug("Get %s transactions from block %s" % (len(tx_hashes), block_number))
          
-         # can get transactions asynchronously with a workpool
-         # NOTE: tx order matters! remember the order we saw them in
+         # can get transactions asynchronously with a workpool (but preserve tx order!)
          if len(tx_hashes) > 0:
-            
+           
             for j in xrange(0, len(tx_hashes)):
                
                tx_hash = tx_hashes[j]
@@ -512,7 +581,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          block_data_time_end = time.time()
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
-         tx = tx_fut.get( 10000000000000000L )
+         tx = future_get_result( tx_fut, 1000000000000000L )
          
          if tx and has_nulldata(tx):
             
@@ -550,7 +619,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             input_idx, input_tx_fut, tx_output_index = future_next( nulldata_tx_futs_and_output_idxs, lambda f: f[1] )
             
             # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
-            input_tx = input_tx_fut.get( 10000000000000000L )
+            input_tx = future_get_result( input_tx_fut, 1000000000000000L )
             sender, amount_in = get_sender_and_amount_in_from_txn( input_tx, tx_output_index )
             
             if sender is None or amount_in is None:
