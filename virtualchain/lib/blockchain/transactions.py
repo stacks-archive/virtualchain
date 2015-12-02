@@ -47,9 +47,6 @@ from bitcoinrpc.authproxy import JSONRPCException
 import session 
 log = session.log 
 
-# bitcoind options inherited from the parent
-g_bitcoind_opts = None
-
 def get_bitcoind( bitcoind_or_opts ):
    """
    Given either a bitcoind API endpoint proxy, 
@@ -58,8 +55,6 @@ def get_bitcoind( bitcoind_or_opts ):
    proxy.
    """ 
    
-   global g_bitcoind_opts
-
    if type(bitcoind_or_opts) == types.DictType or bitcoind_or_opts is None:
 
       # instantiate from options
@@ -535,8 +530,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
              block_data_futures.append( (block_number, block_data_fut) )
 
          else:
-             log.warning("Block %s: no block hash" % block_number)
-      
+             raise Exception("BUG: Block %s: no block hash" % block_number)
       
       block_data_time_start = time.time()
       block_data_time_end = 0
@@ -551,8 +545,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          block_data = future_get_result( block_data_fut, 1000000000000000L )
          
          if 'tx' not in block_data:
-            log.error("tx not in block data of %s" % block_number)
-            return nulldata_txs
+             raise Exception("BUG: No tx data in block %s" % block_number)
          
          tx_hashes = block_data['tx']
          
@@ -569,7 +562,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             
          else:
             
-            raise Exception("Zero-transaction block %s" % block_number)
+            raise Exception("BUG: Zero-transaction block %s" % block_number)
             
       block_tx_time_start = time.time()
       block_tx_time_end = 0
