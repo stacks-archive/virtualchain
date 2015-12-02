@@ -60,13 +60,15 @@ if not hasattr( ssl, "create_default_context" ):
 
 if not globals().has_key('log'):
     log = logging.getLogger()
-    log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-    console = logging.StreamHandler()
-    console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-    log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
-    formatter = logging.Formatter( log_format )
-    console.setFormatter(formatter)
-    log.addHandler(console)
+    if len(log.handlers) == 0:
+        log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+        console = logging.StreamHandler()
+        console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+        log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
+        formatter = logging.Formatter( log_format )
+        console.setFormatter(formatter)
+        log.propagate = False
+        log.addHandler(console)
 
 from bitcoinrpc.authproxy import AuthServiceProxy
 
@@ -144,9 +146,10 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
     return ret
 
 
-def connect_bitcoind( bitcoind_opts ):
+def connect_bitcoind_impl( bitcoind_opts ):
     """
     Create a connection to bitcoind, using a dict of config options.
     """
     return create_bitcoind_connection( bitcoind_opts['bitcoind_user'], bitcoind_opts['bitcoind_passwd'], bitcoind_opts['bitcoind_server'], bitcoind_opts['bitcoind_port'], bitcoind_opts['bitcoind_use_https'] )
  
+
