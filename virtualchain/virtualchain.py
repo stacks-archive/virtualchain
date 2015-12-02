@@ -49,10 +49,6 @@ state_engine = None
 # global flag indicating that we're running
 running = False
 
-# global factory method for connecting to bitcoind
-# (can be overwritten to mock a blockchain)
-connect_bitcoind = None
-
 def sync_virtualchain(bitcoind_opts, last_block, state_engine):
     """
     Synchronize the virtual blockchain state up until a given block.
@@ -121,8 +117,8 @@ def run_virtualchain( state_engine ):
     """
 
     global running
-    global connect_bitcoind
 
+    connect_bitcoind = session.get_connect_bitcoind()
     config_file = config.get_config_filename()
     bitcoin_opts = config.get_bitcoind_config(config_file)
 
@@ -133,9 +129,6 @@ def run_virtualchain( state_engine ):
         bitcoin_opts[k] = v
 
     log.debug("multiprocessing config = (%s, %s)" % (config.configure_multiprocessing(bitcoin_opts)))
-
-    if connect_bitcoind is None:
-        connect_bitcoind = session.connect_bitcoind 
 
     try:
 
@@ -158,7 +151,7 @@ def run_virtualchain( state_engine ):
         _, last_block_id = indexer.get_index_range(bitcoind)
 
 
-def setup_virtualchain(impl_module, testset=False, bitcoind_connection_factory=session.connect_bitcoind):
+def setup_virtualchain(impl_module, testset=False, bitcoind_connection_factory=None, index_worker_env=None):
     """
     Set up the virtual blockchain.
     Use the given virtual blockchain core logic.
@@ -166,8 +159,18 @@ def setup_virtualchain(impl_module, testset=False, bitcoind_connection_factory=s
 
     global connect_bitcoind
 
-    config.set_implementation(impl_module, testset)
-    connect_bitcoind = bitcoind_connection_factory
+    if impl_module is not None:
+        config.set_implementation(impl_module, testset)
+
+    if bitcoind_connection_factory is not None:
+        workpool.set_connect_bitcoind( bitcoind_connection_factory )
+
+    if index_worker_env is not None: 
+        # expect a dict
+        if type(index_worker_env) != dict:
+            raise Exception("index_worker_env must be a dictionary")
+
+        workpool.set_default_worker_env( index_worker_env )
 
 
 def virtualchain_set_opfields( op, **fields ):
@@ -189,6 +192,18 @@ def virtualchain_set_opfields( op, **fields ):
             op[f] = fields[f]
 
     return op
+
+
+def connect_bitcoind( opts ):
+    """
+    Top-level method to connect to bitcoind,
+    using either a built-in default, or a module
+    to be loaded at runtime whose path is referred
+    to by the environment variable
+    VIRTUALCHAIN_MOD_CONNECT_BLOCKCHAIN.
+    """
+    connect_bitcoind_factory = workpool.multiprocess_connect_bitcoind()
+    return connect_bitcoind_factory( opts )
 
 if __name__ == '__main__':
 
