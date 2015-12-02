@@ -44,6 +44,7 @@ import shutil
 import time
 import traceback
 import cPickle as pickle
+import imp
 
 from collections import defaultdict 
 
@@ -676,20 +677,6 @@ class StateEngine( object ):
             return None 
         
         return consensus_hash
-
-
-    def free_indexer_memory(self):
-        """
-        Optimization: remove unnecessary data for the indexer process.
-        """
-        del self.consensus_hashes
-        del self.pending_ops
-        del self.magic_bytes 
-        del self.opcodes
-        del self.state
-        del self.op_order
-        del self.impl
-        del self.rejected
 
 
     @classmethod 
