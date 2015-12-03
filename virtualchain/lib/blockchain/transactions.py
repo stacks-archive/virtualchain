@@ -501,6 +501,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
       
       block_slice = blocks_ids[ (slice_count * slice_len) : min((slice_count+1) * slice_len, len(blocks_ids)) ]
       if len(block_slice) == 0:
+         log.debug("Zero-length block slice")
          break
       
       start_slice_time = time.time()
