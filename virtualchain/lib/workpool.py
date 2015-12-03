@@ -77,6 +77,11 @@ class WorkFuture(object):
         Return None if no result is yet present
         """
         self.sem.wait(timeout)
+
+        if isinstance(self.result, Exception):
+            # something crashed. Throw whatever it was 
+            raise self.result 
+
         return self.result
 
 
