@@ -768,7 +768,14 @@ def multiprocess_pool( bitcoind_opts, python_filepath ):
    """
    num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
    bitcoind_opts_environ = pickle.dumps( bitcoind_opts )
-   return Workpool( num_workers, "python", [python_filepath], worker_env={"VIRTUALCHAIN_BITCOIND_OPTIONS": bitcoind_opts_environ} )
+   worker_env = {
+        "VIRTUALCHAIN_BITCOIND_OPTIONS": bitcoind_opts_environ
+   }
+
+   if os.environ.get("PYTHONPATH", None) is not None:
+       worker_env["PYTHONPATH"] = os.environ["PYTHONPATH"]
+
+   return Workpool( num_workers, "python", [python_filepath], worker_env=worker_env )
 
 
 def multiprocess_bitcoind_opts():
