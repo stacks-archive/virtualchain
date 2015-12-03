@@ -742,7 +742,12 @@ class StateEngine( object ):
         Raise an exception on irrecoverable error--the caller should simply try again.
         """
         
-        first_block_id = state_engine.lastblock + 1 
+        first_block_id = state_engine.lastblock + 1
+        if first_block_id >= end_block_id:
+            # built 
+            log.debug("Up-to-date")
+            return True 
+
         num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
 
         rc = True
