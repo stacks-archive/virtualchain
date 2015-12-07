@@ -238,6 +238,11 @@ class WorkpoolCoordinator( threading.Thread ):
         self.wp = wp
         self.tick = time.time()
         self.d = 0
+        
+        # to avoid wasting extra CPU waiting for nothing...
+        self.prev_num_inp = 0
+        self.prev_num_futs = 0
+        self.backoff_delay = 0.01
 
     
     def run( self ):
@@ -334,10 +339,22 @@ class WorkpoolCoordinator( threading.Thread ):
                 wp.reap_process( p )
 
             if time.time() > self.tick:
-                # debugging 
+                # throttling
                 self.tick = time.time() + 1
                 num_inp = wp.num_pending_inputs()
                 num_futs = wp.num_pending_outputs()
+
+                if self.prev_num_futs > 0 and self.prev_num_inp == num_inp and self.prev_num_futs == num_futs:
+                    # nothing happened.  sleep for a bit 
+                    time.sleep( self.backoff_delay )
+                    self.backoff_delay = min( self.backoff_delay * 2, 1.0 )
+
+                else:
+                    self.backoff_delay = 0.01
+
+                self.prev_num_futs = num_futs 
+                self.prev_inp = num_inp
+
                 if num_inp > 0 or num_futs > 0:
                     log.debug("%s requests to send; %s requests to receive" % (num_inp, num_futs))
 
