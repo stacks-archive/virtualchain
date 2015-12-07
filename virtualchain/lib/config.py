@@ -172,6 +172,7 @@ def get_bitcoind_config( config_file=None ):
    bitcoind_user = None 
    bitcoind_passwd = None 
    bitcoind_use_https = None
+   bitcoind_timeout = None
    
    if config_file is not None:
          
@@ -180,12 +181,27 @@ def get_bitcoind_config( config_file=None ):
 
       if parser.has_section('bitcoind'):
 
+         if parser.has_option('bitcoind', 'server'):
+            bitcoind_server = parser.get('bitcoind', 'server')
+
+         if parser.has_option('bitcoind', 'port'):
+            bitcoind_port = int(parser.get('bitcoind', 'port'))
+
+         if parser.has_option('bitcoind', 'user'):
+            bitcoind_user = parser.get('bitcoind', 'user')
+
+         if parser.has_option('bitcoind', 'passwd'):
+            bitcoind_passwd = parser.get('bitcoind', 'passwd')
+
          if parser.has_option('bitcoind', 'use_https'):
             use_https = parser.get('bitcoind', 'use_https')
          else:
             use_https = 'no'
 
-         if use_https.lower() == "yes" or use_https.lower() == "y":
+         if parser.has_option('bitcoind', 'timeout'):
+            bitcoind_timeout = float(parser.get('bitcoind', 'timeout'))
+
+         if use_https.lower() in ["yes", "y", "true"]:
             bitcoind_use_https = True
          else:
             bitcoind_use_https = False
@@ -199,13 +215,15 @@ def get_bitcoind_config( config_file=None ):
       bitcoind_user = 'openname'
       bitcoind_passwd = 'opennamesystem'
       bitcoind_use_https = True
+      bitcoind_timeout = 300
         
    default_bitcoin_opts = {
       "bitcoind_user": bitcoind_user,
       "bitcoind_passwd": bitcoind_passwd,
       "bitcoind_server": bitcoind_server,
       "bitcoind_port": bitcoind_port,
-      "bitcoind_use_https": bitcoind_use_https
+      "bitcoind_use_https": bitcoind_use_https,
+      "bitcoind_timeout": bitcoind_timeout
    }
       
    return default_bitcoin_opts
