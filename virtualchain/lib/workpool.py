@@ -323,9 +323,6 @@ class WorkpoolCoordinator( threading.Thread ):
                         # put a message 
                         cnt += 1
 
-                else:
-                    log.debug("%s input is full" % buf.proc_pid() )
-
             self.d += cnt
 
             if len(ready_rfds) > 0:
