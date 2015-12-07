@@ -100,7 +100,7 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
     
     global do_wrap_socket, create_ssl_authproxy
         
-    log.debug("[%s] Connect to bitcoind at %s://%s@%s:%s" % (os.getpid(), 'https' if use_https else 'http', rpc_username, server, port) )
+    log.debug("[%s] Connect to bitcoind at %s://%s@%s:%s, timeout=%s" % (os.getpid(), 'https' if use_https else 'http', rpc_username, server, port, timeout) )
     
     protocol = 'https' if use_https else 'http'
     if not server or len(server) < 1:
@@ -139,7 +139,8 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
        "bitcoind_passwd": rpc_password,
        "bitcoind_server": server,
        "bitcoind_port": port,
-       "bitcoind_use_https": use_https
+       "bitcoind_use_https": use_https,
+       "bitcoind_timeout": timeout
     }
     
     setattr( ret, "opts", bitcoind_opts )
