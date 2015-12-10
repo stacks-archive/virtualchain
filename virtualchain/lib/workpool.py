@@ -77,6 +77,11 @@ class WorkFuture(object):
         Return None if no result is yet present
         """
         self.sem.wait(timeout)
+
+        if isinstance(self.result, Exception):
+            # something crashed. Throw whatever it was 
+            raise self.result 
+
         return self.result
 
 
@@ -233,6 +238,11 @@ class WorkpoolCoordinator( threading.Thread ):
         self.wp = wp
         self.tick = time.time()
         self.d = 0
+        
+        # to avoid wasting extra CPU waiting for nothing...
+        self.prev_num_inp = 0
+        self.prev_num_futs = 0
+        self.backoff_delay = 0.01
 
     
     def run( self ):
@@ -313,9 +323,6 @@ class WorkpoolCoordinator( threading.Thread ):
                         # put a message 
                         cnt += 1
 
-                else:
-                    log.debug("%s input is full" % buf.proc_pid() )
-
             self.d += cnt
 
             if len(ready_rfds) > 0:
@@ -329,10 +336,22 @@ class WorkpoolCoordinator( threading.Thread ):
                 wp.reap_process( p )
 
             if time.time() > self.tick:
-                # debugging 
+                # throttling
                 self.tick = time.time() + 1
                 num_inp = wp.num_pending_inputs()
                 num_futs = wp.num_pending_outputs()
+
+                if self.prev_num_futs > 0 and self.prev_num_inp == num_inp and self.prev_num_futs == num_futs:
+                    # nothing happened.  sleep for a bit 
+                    time.sleep( self.backoff_delay )
+                    self.backoff_delay = min( self.backoff_delay * 2, 1.0 )
+
+                else:
+                    self.backoff_delay = 0.01
+
+                self.prev_num_futs = num_futs 
+                self.prev_inp = num_inp
+
                 if num_inp > 0 or num_futs > 0:
                     log.debug("%s requests to send; %s requests to receive" % (num_inp, num_futs))
 
@@ -763,7 +782,14 @@ def multiprocess_pool( bitcoind_opts, python_filepath ):
    """
    num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
    bitcoind_opts_environ = pickle.dumps( bitcoind_opts )
-   return Workpool( num_workers, "python", [python_filepath], worker_env={"VIRTUALCHAIN_BITCOIND_OPTIONS": bitcoind_opts_environ} )
+   worker_env = {
+        "VIRTUALCHAIN_BITCOIND_OPTIONS": bitcoind_opts_environ
+   }
+
+   if os.environ.get("PYTHONPATH", None) is not None:
+       worker_env["PYTHONPATH"] = os.environ["PYTHONPATH"]
+
+   return Workpool( num_workers, "python", [python_filepath], worker_env=worker_env )
 
 
 def multiprocess_bitcoind_opts():
