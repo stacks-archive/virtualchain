@@ -8,4 +8,3 @@ Twisted==15.3.0
 txJSON-RPC==0.3.1
 utilitybelt==0.2.6
 zope.interface==4.1.2
-netstring==1.0.0
