@@ -41,7 +41,11 @@ import traceback
 import cPickle as pickle
 import blockchain.session
 import copy
+import imp
+
 log = blockchain.session.log
+
+default_worker_env = {}
 
 class WorkFuture(object):
 
@@ -73,6 +77,11 @@ class WorkFuture(object):
         Return None if no result is yet present
         """
         self.sem.wait(timeout)
+
+        if isinstance(self.result, Exception):
+            # something crashed. Throw whatever it was 
+            raise self.result 
+
         return self.result
 
 
@@ -229,6 +238,11 @@ class WorkpoolCoordinator( threading.Thread ):
         self.wp = wp
         self.tick = time.time()
         self.d = 0
+        
+        # to avoid wasting extra CPU waiting for nothing...
+        self.prev_num_inp = 0
+        self.prev_num_futs = 0
+        self.backoff_delay = 0.01
 
     
     def run( self ):
@@ -309,9 +323,6 @@ class WorkpoolCoordinator( threading.Thread ):
                         # put a message 
                         cnt += 1
 
-                else:
-                    log.debug("%s input is full" % buf.proc_pid() )
-
             self.d += cnt
 
             if len(ready_rfds) > 0:
@@ -325,10 +336,22 @@ class WorkpoolCoordinator( threading.Thread ):
                 wp.reap_process( p )
 
             if time.time() > self.tick:
-                # debugging 
+                # throttling
                 self.tick = time.time() + 1
                 num_inp = wp.num_pending_inputs()
                 num_futs = wp.num_pending_outputs()
+
+                if self.prev_num_futs > 0 and self.prev_num_inp == num_inp and self.prev_num_futs == num_futs:
+                    # nothing happened.  sleep for a bit 
+                    time.sleep( self.backoff_delay )
+                    self.backoff_delay = min( self.backoff_delay * 2, 1.0 )
+
+                else:
+                    self.backoff_delay = 0.01
+
+                self.prev_num_futs = num_futs 
+                self.prev_inp = num_inp
+
                 if num_inp > 0 or num_futs > 0:
                     log.debug("%s requests to send; %s requests to receive" % (num_inp, num_futs))
 
@@ -353,6 +376,14 @@ class Workpool(object):
         
         self.pending_output_lock = threading.Lock()
         self.pending_outputs = {}      # map message key to future
+
+        if worker_env is None:
+            worker_env = default_worker_env
+        else:
+            tmp = {}
+            tmp.update( default_worker_env )
+            tmp.update( worker_env )
+            worker_env = tmp
 
         # start processes 
         for i in xrange(0, num_workers):
@@ -711,6 +742,7 @@ class Workpool(object):
 
 # bitcoind just for this process
 process_local_bitcoind = None
+process_local_connect_bitcoind = None
 
 def multiprocess_bitcoind( bitcoind_opts, reset=False ):
    """
@@ -728,18 +760,11 @@ def multiprocess_bitcoind( bitcoind_opts, reset=False ):
       if bitcoind_opts is None:
           # neither given nor globally set 
           raise Exception("No bitcoind options set.")
-    
-      from virtualchain import connect_bitcoind
+   
+      connect_bitcoind = multiprocess_connect_bitcoind()
       process_local_bitcoind = connect_bitcoind( bitcoind_opts )
 
    return process_local_bitcoind
-
-
-def multiprocess_bitcoind_init( bitcoind_opts ):
-   """
-   Set up a process's bitcoind connection
-   """
-   multiprocess_bitcoind( bitcoind_opts, reset=True )
 
 
 def multiprocess_batch_size( bitcoind_opts ):
@@ -757,7 +782,14 @@ def multiprocess_pool( bitcoind_opts, python_filepath ):
    """
    num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
    bitcoind_opts_environ = pickle.dumps( bitcoind_opts )
-   return Workpool( num_workers, "python", [python_filepath], worker_env={"VIRTUALCHAIN_BITCOIND_OPTIONS": bitcoind_opts_environ} )
+   worker_env = {
+        "VIRTUALCHAIN_BITCOIND_OPTIONS": bitcoind_opts_environ
+   }
+
+   if os.environ.get("PYTHONPATH", None) is not None:
+       worker_env["PYTHONPATH"] = os.environ["PYTHONPATH"]
+
+   return Workpool( num_workers, "python", [python_filepath], worker_env=worker_env )
 
 
 def multiprocess_bitcoind_opts():
@@ -768,6 +800,45 @@ def multiprocess_bitcoind_opts():
    bitcoind_opts = pickle.loads( bitcoind_opts_pickled )
    return bitcoind_opts
 
+
+def multiprocess_connect_bitcoind():
+    """
+    Get the connect_bitcoind factory method.
+    """
+    global process_local_connect_bitcoind
+    if process_local_connect_bitcoind is None:
+
+        # override the blockchain connection factory (for testing)
+        blockchain_connect_override_module = os.getenv("VIRTUALCHAIN_MOD_CONNECT_BLOCKCHAIN")
+        if blockchain_connect_override_module is not None:
+
+            log.debug("Using '%s' to implement blockchain connection factory" % blockchain_connect_override_module)
+
+            # either compiled or source...
+            mod_type = None 
+            if blockchain_connect_override_module.endswith(".pyc"):
+                mod_type = imp.PY_COMPILED
+            elif blockchain_connect_override_module.endswith(".py"):
+                mod_type = imp.PY_SOURCE
+            else:
+                raise Exception("Unsupported module type: '%s'" % blockchain_connect_override_module)
+                
+            # find and load the module with the desired 'connect_bitcoind' method
+            mod_fd = open(blockchain_connect_override_module, "r")
+            connect_blockchain_mod = imp.load_module("connect_blockchain", mod_fd, blockchain_connect_override_module, ("", 'r', mod_type) )
+
+            try:
+                process_local_connect_bitcoind = connect_blockchain_mod.connect_bitcoind
+                assert hasattr( process_local_connect_bitcoind, "__call__" )
+            except:
+                raise Exception("Module '%s' has no callable 'connect_bitcoind' method" % blockchain_connect_override_module)
+
+        else:
+            # default
+            process_local_connect_bitcoind = blockchain.session.connect_bitcoind_impl
+
+    return process_local_connect_bitcoind
+ 
 
 def multiprocess_rpc_marshal( method_name, method_args ):
    """
@@ -798,3 +869,18 @@ def multiprocess_worker_main( mainloop_body ):
            sys.stderr.flush()
            break
 
+
+def set_default_worker_env( worker_env ):
+    """
+    Set the default environment variables for a worker.
+    """
+    global default_worker_env
+    default_worker_env = worker_env
+
+
+def set_connect_bitcoind( connect_bitcoind ):
+    """
+    Set default bitcoind connection factory.
+    """
+    global process_local_connect_bitcoind
+    process_local_connect_bitcoind = connect_bitcoind

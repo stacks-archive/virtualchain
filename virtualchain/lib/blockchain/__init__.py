@@ -27,4 +27,4 @@ import session
 from transactions import get_bitcoind, getrawtransaction, getrawtransaction_async, getblockhash, getblockhash_async, getblock, getblock_async, get_sender_and_amount_in_from_txn, \
    get_total_out, process_nulldata_tx_async, get_nulldata_txs_in_blocks
 from nulldata import get_nulldata, has_nulldata
-from session import BitcoindConnection, create_bitcoind_connection, connect_bitcoind
+from session import BitcoindConnection, create_bitcoind_connection

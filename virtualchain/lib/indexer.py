@@ -3,8 +3,8 @@
 """
     Virtualchain
     ~~~~~
-    copyright: (c) 2014 by Halfmoon Labs, Inc.
-    copyright: (c) 2015 by Blockstack.org
+    copyright: (c) 2014-2015 by Halfmoon Labs, Inc.
+    copyright: (c) 2016 by Blockstack.org
     
     This file is part of Virtualchain
     
@@ -44,6 +44,7 @@ import shutil
 import time
 import traceback
 import cPickle as pickle
+import imp
 
 from collections import defaultdict 
 
@@ -108,7 +109,7 @@ class StateEngine( object ):
     """
     
 
-    def __init__(self, magic_bytes, opcodes, impl=None, state=None, op_order=None, initial_snapshots={} ):
+    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={} ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -119,7 +120,7 @@ class StateEngine( object ):
         assocated with the OP_RETURN will be parsed, checked, logged, and 
         committed by the implementation (impl).  The implementation decides exactly 
         what each of these mean; this class simply feeds it the transactions
-        in order.
+        in the order they appeared on the blockchain.
         
         This class looks for OP_RETURN data that starts with the byte sequence in magic_bytes,
         and then only select those which start with magic_bytes + op, where op is an 
@@ -128,38 +129,34 @@ class StateEngine( object ):
         
         Expected OP_RETURN data format:
         
-         0     M  M+1                      40-M-1
+         0     M  M+1                      len(OP_RETURN)-M-1
          |-----|--|------------------------|
           magic op payload
         
+        The job of the implementation is to translate the above data, plus anything else it 
+        can earn from the previously-parsed transactions and from other sources, into a 
+        dictionary of (field: value) tuples that constitute an operation.
+
+        @magic_bytes: the `magic` field above.
+        @opcodes: the list of possible values for the `op` field.
+        @opfields: a dictionary that maps each `op` to a list of field names. 
         
         The caller may supply an optional argument called 'state', which will be 
         passed into each implementation method.  It is meant to preserve implementation-
         specific state--in particular, whatever state the implementation expects to be 
         present.
-        
-        The caller may also specify the order in which each type of operation is 
-        processed, by passing a list of opcodes in op_order.
         """
         
         self.consensus_hashes = initial_snapshots
         self.pending_ops = defaultdict(list)
         self.magic_bytes = magic_bytes 
         self.opcodes = opcodes[:]
+        self.opfields = copy.deepcopy(opfields)
         self.state = state
-        self.op_order = op_order
         self.impl = impl
         self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
         self.rejected = {}
-
-        if self.op_order is None:
-            self.op_order = self.impl.get_op_processing_order()[:]
-            if self.op_order is None:
-                self.op_order = opcodes
-       
-        # there's always a 'final' operation type, to be processed last
-        self.op_order.append('virtualchain_final')
 
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
@@ -408,6 +405,50 @@ class StateEngine( object ):
         return cls.make_snapshot_from_ops_hash( record_root_hash, prev_consensus_hashes )
 
 
+    @classmethod
+    def serialize_op( cls, opcode, opdata, opfields, verbose=True ):
+        """
+        Given an opcode (byte), associated data (dict), and the operation
+        fields to serialize (opfields), convert it 
+        into its canonical serialized form (i.e. in order to 
+        generate a consensus hash.
+
+        Return the canonical form on success.
+        Return None on error.
+        """
+
+        fields = opfields.get( opcode, None )
+        if fields is None:
+            log.error("BUG: unrecongnized opcode '%s'" % opcode )
+            return None 
+
+        all_values = []
+        debug_all_values = []
+        missing = []
+        for field in fields:
+           if not opdata.has_key(field):
+              missing.append( field )
+
+           field_value = opdata.get(field, None)
+           if field_value is None:
+              field_value = ""
+          
+           # netstring format
+           debug_all_values.append( str(field) + "=" + str(len(str(field_value))) + ":" + str(field_value) )
+           all_values.append( str(len(str(field_value))) + ":" + str(field_value) )
+
+        if len(missing) > 0:
+           print json.dumps( opdata, indent=4 )
+           raise Exception("BUG: missing fields '%s'" % (",".join(missing)))
+
+        if verbose:
+            log.debug("SERIALIZE: %s:%s" % (opcode, ",".join(debug_all_values) ))
+
+        field_values = ",".join( all_values )
+
+        return opcode + ":" + field_values
+
+
     def snapshot( self, block_id, pending_ops ):
         """
         Given the currnet block ID and the set of operations committed,
@@ -442,8 +483,9 @@ class StateEngine( object ):
         log.debug("Snapshotting block %s" % (block_id) )
         
         serialized_ops = []
-        for nameop in pending_ops['virtualchain_ordered']:
-            serialized_record = self.impl.db_serialize( nameop['virtualchain_opcode'], nameop, db_state=self.state )
+        for opdata in pending_ops['virtualchain_ordered']:
+            # serialized_record = self.impl.db_serialize( opdata['virtualchain_opcode'], opdata, db_state=self.state )
+            serialized_record = StateEngine.serialize_op( opdata['virtualchain_opcode'], opdata, self.opfields )
             serialized_ops.append( serialized_record )
 
         previous_consensus_hashes = []
@@ -588,7 +630,7 @@ class StateEngine( object ):
 
         new_ops = {}
 
-        for op in self.op_order:
+        for op in self.opcodes:
             new_ops[op] = []
 
         # transaction-ordered listing of accepted operations
@@ -678,20 +720,6 @@ class StateEngine( object ):
         return consensus_hash
 
 
-    def free_indexer_memory(self):
-        """
-        Optimization: remove unnecessary data for the indexer process.
-        """
-        del self.consensus_hashes
-        del self.pending_ops
-        del self.magic_bytes 
-        del self.opcodes
-        del self.state
-        del self.op_order
-        del self.impl
-        del self.rejected
-
-
     @classmethod 
     def workpool_worker_startup( cls, s ):
         """
@@ -755,7 +783,12 @@ class StateEngine( object ):
         Raise an exception on irrecoverable error--the caller should simply try again.
         """
         
-        first_block_id = state_engine.lastblock + 1 
+        first_block_id = state_engine.lastblock + 1
+        if first_block_id >= end_block_id:
+            # built 
+            log.debug("Up-to-date")
+            return True 
+
         num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
 
         rc = True

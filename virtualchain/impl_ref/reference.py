@@ -135,12 +135,3 @@ def db_save( block_id, filename, db_state=None ):
    print "\nreference implementation of db_save\n"
    return True
 
-
-def db_serialize( opcode, opdata, db_state=None ):
-   """
-   Given an operation and its data, serialize it.
-   Return a string representing this operation.
-   """
-   print "\nreference implementation of db_iterable\n"
-   return ""
-

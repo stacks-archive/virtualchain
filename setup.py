@@ -3,8 +3,8 @@
 """
     Virtualchain
     ~~~~~
-    copyright: (c) 2014 by Halfmoon Labs, Inc.
-    copyright: (c) 2015 by Blockstack.org
+    copyright: (c) 2014-15 by Halfmoon Labs, Inc.
+    copyright: (c) 2016 by Blockstack.org
 
     This file is part of Virtualchain
 
@@ -25,7 +25,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='virtualchain',
-    version='0.0.6',
+    version='0.0.7',
     url='https://github.com/blockstack/virtualchain',
     license='GPLv3',
     author='Blockstack.org',

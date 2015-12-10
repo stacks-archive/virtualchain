@@ -37,6 +37,9 @@ import ssl
 import threading
 import time
 import socket
+from bitcoinrpc.authproxy import AuthServiceProxy
+from utilitybelt import is_valid_int
+from ConfigParser import SafeConfigParser
 
 try:
    from ..config import DEBUG
@@ -44,9 +47,7 @@ except:
    # running as an indexer worker
    from virtualchain.lib.config import DEBUG
 
-from utilitybelt import is_valid_int
-from ConfigParser import SafeConfigParser
-
+# various SSL compat measures
 create_ssl_authproxy = False 
 do_wrap_socket = False
 
@@ -60,15 +61,16 @@ if not hasattr( ssl, "create_default_context" ):
 
 if not globals().has_key('log'):
     log = logging.getLogger()
-    log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-    console = logging.StreamHandler()
-    console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-    log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
-    formatter = logging.Formatter( log_format )
-    console.setFormatter(formatter)
-    log.addHandler(console)
+    if len(log.handlers) == 0:
+        log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+        console = logging.StreamHandler()
+        console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+        log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
+        formatter = logging.Formatter( log_format )
+        console.setFormatter(formatter)
+        log.propagate = False
+        log.addHandler(console)
 
-from bitcoinrpc.authproxy import AuthServiceProxy
 
 class BitcoindConnection( httplib.HTTPSConnection ):
    """
@@ -90,7 +92,7 @@ class BitcoindConnection( httplib.HTTPSConnection ):
       self.sock = ssl.wrap_socket( sock, cert_reqs=ssl.CERT_NONE )
       
 
-def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_https ):
+def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_https, timeout ):
     """
     Creates an RPC client to a bitcoind instance.
     It will have ".opts" defined as a member, which will be a dict that stores the above connection options.
@@ -113,19 +115,19 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
         if do_wrap_socket:
            # ssl._create_unverified_context and ssl.create_default_context are not supported.
            # wrap the socket directly 
-           connection = BitcoindConnection( server, int(port), timeout=300 )
+           connection = BitcoindConnection( server, int(port), timeout=timeout )
            ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
            
         elif create_ssl_authproxy:
            # ssl has _create_unverified_context, so we're good to go 
-           ret = AuthServiceProxy(authproxy_config_uri, timeout=300)
+           ret = AuthServiceProxy(authproxy_config_uri, timeout=timeout)
         
         else:
            # have to set up an unverified context ourselves 
            ssl_ctx = ssl.create_default_context()
            ssl_ctx.check_hostname = False
            ssl_ctx.verify_mode = ssl.CERT_NONE
-           connection = httplib.HTTPSConnection( server, int(port), context=ssl_ctx, timeout=300 )
+           connection = httplib.HTTPSConnection( server, int(port), context=ssl_ctx, timeout=timeout )
            ret = AuthServiceProxy(authproxy_config_uri, connection=connection)
           
     else:
@@ -144,9 +146,12 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
     return ret
 
 
-def connect_bitcoind( bitcoind_opts ):
+def connect_bitcoind_impl( bitcoind_opts ):
     """
     Create a connection to bitcoind, using a dict of config options.
     """
-    return create_bitcoind_connection( bitcoind_opts['bitcoind_user'], bitcoind_opts['bitcoind_passwd'], bitcoind_opts['bitcoind_server'], bitcoind_opts['bitcoind_port'], bitcoind_opts['bitcoind_use_https'] )
+    return create_bitcoind_connection( bitcoind_opts['bitcoind_user'], bitcoind_opts['bitcoind_passwd'], \
+                                       bitcoind_opts['bitcoind_server'], int(bitcoind_opts['bitcoind_port']), \
+                                       bitcoind_opts['bitcoind_use_https'], float(bitcoind_opts.get('bitcoind_timeout', 300)) )
  
+

@@ -238,13 +238,16 @@ def parse_bitcoind_args( return_parser=False, parser=None ):
         help='the password for bitcoind RPC server')
     parser.add_argument(
         "--bitcoind-use-https", action='store_true',
-        help='use HTTPS to connect to bitcoind')
-    
+        help='use HTTPS to connect to bitcoind') 
+    parser.add_argument(
+        "--bitcoind-timeout", type=int,
+        help='the number of seconds to wait before timing out a request')
+
     args, _ = parser.parse_known_args()
     
     # propagate options 
-    for (argname, config_name) in zip( ["bitcoind_server", "bitcoind_port", "bitcoind_user", "bitcoind_passwd"], \
-                                       ["BITCOIND_SERVER", "BITCOIND_PORT", "BITCOIND_USER", "BITCOIND_PASSWD"] ):
+    for (argname, config_name) in zip( ["bitcoind_server", "bitcoind_port", "bitcoind_user", "bitcoind_passwd", "bitcoind_timeout"], \
+                                       ["BITCOIND_SERVER", "BITCOIND_PORT", "BITCOIND_USER", "BITCOIND_PASSWD", "BITCOIND_TIMEOUT"] ):
         
         if hasattr( args, argname ) and getattr( args, argname ) is not None:
             
