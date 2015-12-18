@@ -943,8 +943,7 @@ def get_index_range( bitcoind ):
        current_block = int(bitcoind.getblockcount())
         
     except Exception, e:
-       # TODO: reconnect on connection error
-       log.exception(e)
+       log.error(e)
        return None, None
 
     # check our last known file
