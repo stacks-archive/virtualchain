@@ -44,6 +44,7 @@ import bitcoin
 import binascii
 import json
 import pybitcoin
+import pprint
 from decimal import *
 import cPickle as pickle
 
@@ -469,6 +470,16 @@ def bandwidth_record( total_time, block_data ):
    }
 
 
+def tx_is_coinbase( tx ):
+    """
+    Is a transaction a coinbase transaction?
+    """
+    for inp in tx['vin']:
+        if 'coinbase' in inp.keys():
+            return True 
+
+    return False
+
 def tx_to_hex( tx ):
      """
      Convert a bitcoin-given transaction into its hex string.
@@ -550,6 +561,23 @@ def block_header_verify( block_data, prev_hash, block_hash ):
     candidate_hash = binascii.hexlify( candidate_hash_bin_reversed[::-1] )
 
     return block_hash == candidate_hash
+
+
+def block_verify( block_data ):
+    """
+    Given block data (a dict with 'merkleroot' hex string and 'tx' list of hex strings--i.e.
+    a block returned from bitcoind's getblock JSON RPC method), verify that the
+    transactions are consistent.
+
+    Return True on success
+    Return False if not.
+    """
+     
+    # verify block data txs 
+    m = pybitcoin.MerkleTree( block_data['tx'] )
+    root_hash = str(m.root())
+
+    return root_hash == str(block_data['merkleroot'])
 
 
 def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block_hash=None ):
@@ -672,12 +700,10 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          block_hash = block_hashes[block_number]
          block_data = block_datas[block_hash]
          
-         # verify block data txs 
-         m = pybitcoin.MerkleTree( block_data['tx'] )
-         root_hash = str(m.root())
-
-         if root_hash != str(block_data['merkleroot']):
-             raise Exception("Hash mismatch on block %s: got invalid Merkle root %s (expected %s)" % (block_hash, root_hash, block_data['merkleroot']))
+         # verify block data txs
+         rc = block_verify( block_data )
+         if not rc:
+             raise Exception("Hash mismatch on block %s: got invalid Merkle root (expected %s)" % (block_hash, block_data['merkleroot']))
 
          # go get each transaction
          tx_hashes = block_data['tx']
@@ -708,8 +734,9 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
          tx = future_get_result( tx_fut, 1000000000000000L )
-        
-         if 'coinbase' not in tx['vin'][0].keys():
+         
+         #if len(tx['vin']) > 0 and 'coinbase' not in tx['vin'][0].keys():
+         if not tx_is_coinbase( tx ):
 
              # verify non-coinbase transaction 
              tx_hash = tx['txid']
@@ -752,11 +779,17 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
             
             # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
             input_tx = future_get_result( input_tx_fut, 1000000000000000L )
-
-            # verify 
             input_tx_hash = input_tx['txid']
-            if not tx_verify( input_tx, input_tx_hash ):
-                raise Exception("Input transaction hash mismatch %s from tx %s (index %s)" % (input_tx['txid'], tx['txid'], tx_output_index))
+
+            # verify (but skip coinbase) 
+            if not tx_is_coinbase( input_tx ):
+                try:
+                    if not tx_verify( input_tx, input_tx_hash ):
+                        raise Exception("Input transaction hash mismatch %s from tx %s (index %s)" % (input_tx['txid'], tx['txid'], tx_output_index))
+                except:
+                    pp = pprint.PrettyPrinter()
+                    pp.pprint(input_tx)
+                    raise
 
             sender, amount_in = get_sender_and_amount_in_from_txn( input_tx, tx_output_index )
             
@@ -861,40 +894,4 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
       nulldata_txs.append( (block_number, txs) )
       
    return nulldata_txs
-
-
-def get_block_headers( workpool, bitcoind_opts, start_block_id, end_block_id ):
-    """
-    Get all block headers between start_block_id and end_block_id from a particular bitcoind node.
-    Use the given process workpool to go and fetch them.
-
-    Verify that the block headers form a block chain.
-    Return the sorted list of block headers
-    """
-    
-    block_hash_futures = []
-    block_header_futures = []
-
-    # get all block hashes 
-    for block_number in xrange(start_block_id, end_block_id):
-         
-        block_hash_fut = getblockhash_async( workpool, bitcoind_opts, block_number )
-        block_hash_futures.append( (block_number, block_hash_fut) )
-   
-    # coalesce, and get block header 
-    for i in xrange(0, len(block_hash_futures)):
-         
-         block_number, block_hash_fut = future_next( block_hash_futures, lambda f: f[1] )
-         
-         # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
-         block_hash = future_get_result( block_hash_fut, 10000000000000000L )
-        
-         if block_hash is not None:
-             block_header_fut = getblock_async( workpool, bitcoind_opts, block_hash )
-             block_header_futures.append( (block_number, block_data_fut) )
-
-         else:
-             raise Exception("BUG: Block %s: no block hash" % block_number)
-
-
 
