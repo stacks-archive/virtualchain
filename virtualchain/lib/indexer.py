@@ -622,13 +622,14 @@ class StateEngine( object ):
         """
         Given a transaction-ordered sequence of parsed operations,
         check their validity and give them to the state engine to 
-        effect state changes.
+        affect state changes.
 
         It calls 'db_check' to validate each operation, and 'db_commit'
-        to add it to the state engine.
+        to add it to the state engine.  Gets back a list of state
+        transitions (ops) to snapshot.
         """
 
-        new_ops = {}
+        new_ops = defaultdict(list)
 
         for op in self.opcodes:
             new_ops[op] = []
@@ -648,31 +649,29 @@ class StateEngine( object ):
             if rc:
 
                  # good to commit
-                 new_op = self.impl.db_commit( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
+                 # db_commit can give back a list of opcodes for this transaction, so take them in the order they come
+                 new_op_list = self.impl.db_commit( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
+                 if type(new_op_list) != list:
+                     new_op_list = [new_op_list]
 
-                 if new_op is not None:
-                    if new_op:
-                        
-                        # got the processed op
-                        new_op.update( reserved )
+                 for new_op in new_op_list:
+                     if new_op is not None:
+                        if type(new_op) == dict:
+                            
+                            # externally-visible state transition
+                            new_op.update( reserved )
 
-                        if not new_ops.has_key(opcode):
-                            new_ops[opcode] = [new_op]
+                            new_ops[ opcode ].append( new_op )
+                            new_ops['virtualchain_ordered'].append( new_op )
+
                         else:
-                            new_ops[opcode].append( new_op )
-
-                        new_ops['virtualchain_ordered'].append( new_op )
-
-                    else:
-                        continue
-
-                 else:
-                    raise Exception("BUG: db_commit hook must return a record to snapshot (expected dict, got '%s')" % op)
+                            # internal state transition--nothing to snapshot for this op
+                            continue
 
 
         # final commit
         # the implementation has a chance here to feed any extra data into the consensus hash with this call
-        # (e.g. to effect internal state transitions that occur as seconary, holistic consequences to the sequence
+        # (e.g. to affect internal state transitions that occur as seconary, holistic consequences to the sequence
         # of prior operations for this block).
         final_op = self.impl.db_commit( block_id, 'virtualchain_final', None, None, None, db_state=self.state )
         if final_op is not None:
