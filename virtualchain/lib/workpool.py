@@ -374,6 +374,9 @@ class Workpool(object):
             tmp.update(worker_env)
             worker_env = tmp
 
+        if 'PYTHONPATH' in worker_env:
+            self.worker_bin_path = worker_env['PYTHONPATH'] + "/python"
+
         # start processes
         for i in xrange(0, num_workers):
 
