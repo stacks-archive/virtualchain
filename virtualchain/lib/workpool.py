@@ -3,16 +3,16 @@
 """
     Virtualchain
     ~~~~~
-    copyright: (c) 2014 by Halfmoon Labs, Inc.
-    copyright: (c) 2015 by Blockstack.org
-    
+    copyright: (c) 2014-15 by Halfmoon Labs, Inc.
+    copyright: (c) 2016 by Blockstack.org
+
     This file is part of Virtualchain
-    
+
     Virtualchain is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
-    
+
     Virtualchain is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -47,6 +47,7 @@ log = blockchain.session.log
 
 default_worker_env = {}
 
+
 class WorkFuture(object):
 
     def __init__(self, key, wp):
@@ -57,8 +58,7 @@ class WorkFuture(object):
         self.wp = wp
         self.pid = -1
 
-
-    def wait( self, timeout=None ):
+    def wait(self, timeout=None):
         """
         Wait (possibly forever) for there to be a result.
         Return True if ready
@@ -66,12 +66,11 @@ class WorkFuture(object):
         """
 
         if self.result is not None:
-            return self.result 
+            return self.result
 
         self.sem.wait(timeout)
 
-
-    def get( self, timeout=None ):
+    def get(self, timeout=None):
         """
         Wait (possibly forever) and get a result.
         Return None if no result is yet present
@@ -79,20 +78,18 @@ class WorkFuture(object):
         self.sem.wait(timeout)
 
         if isinstance(self.result, Exception):
-            # something crashed. Throw whatever it was 
-            raise self.result 
+            # something crashed. Throw whatever it was
+            raise self.result
 
         return self.result
 
-
-    def ready( self ):
+    def ready(self):
         """
         Does the future have a result?
         """
         return self.sem.is_set()
-        
 
-    def put_result( self, result ):
+    def put_result(self, result):
         """
         Put a result, and wake up anyone blocked on the future.
         """
@@ -108,8 +105,7 @@ class WorkIOBuf(object):
         self.stdout_decoder = netstring.Decoder()
         self.write_carryover = ""
 
-
-    def readmsgs( self, rfd ):
+    def readmsgs(self, rfd):
         """
         Get lines from stdout.
         Return None on EOF
@@ -117,7 +113,7 @@ class WorkIOBuf(object):
         buf = ""
         while True:
             try:
-                rd = os.read( rfd.fileno(), 4096 )
+                rd = os.read(rfd.fileno(), 4096)
                 if len(rd) == 0:
                     if len(buf) == 0:
                         # EOF
@@ -125,28 +121,27 @@ class WorkIOBuf(object):
 
                     else:
                         # EOF; process what we have
-                        break 
+                        break
 
                 buf += rd
             except (IOError, OSError), e:
                 if e.errno == errno.EWOULDBLOCK:
-                    # can't ready anymore 
+                    # can't ready anymore
                     break
                 elif e.errno == errno.EPIPE:
-                    # process is dead 
-                    return None 
+                    # process is dead
+                    return None
 
                 else:
-                    raise 
+                    raise
 
         ret = []
-        for msg in self.stdout_decoder.feed( buf ):
-            ret.append( msg )
+        for msg in self.stdout_decoder.feed(buf):
+            ret.append(msg)
 
         return ret
 
-
-    def write_or_carry( self, wfd, nm ):
+    def write_or_carry(self, wfd, nm):
         """
         Write all of the netstring message (nm) to the file descriptor wfd,
         but save anything we didn't write in the event of an EWOULDBLOCK.
@@ -154,20 +149,20 @@ class WorkIOBuf(object):
         Return False if we did not.
         Return None on EPIPE
         """
-       
+
         nm = nm[:]
         while len(nm) > 0:
             try:
-                nw = os.write( wfd.fileno(), nm )
+                nw = os.write(wfd.fileno(), nm)
                 nm = nm[nw:]
             except (IOError, OSError), e:
                 if e.errno == errno.EWOULDBLOCK:
-                    # can't write anymore 
+                    # can't write anymore
                     self.write_carryover = nm
                     return False
 
                 elif e.errno == errno.EPIPE:
-                    # process is dead 
+                    # process is dead
                     return None
 
                 else:
@@ -177,25 +172,23 @@ class WorkIOBuf(object):
         self.write_carryover = ""
         return True
 
-
-    def flush( self, wfd ):
+    def flush(self, wfd):
         """
         Try to send all of the carryover.
         Return True on success
         Return False if there is still stuff left
         Return None if the process died
         """
-        rc = self.write_or_carry( wfd, self.write_carryover )
+        rc = self.write_or_carry(wfd, self.write_carryover)
         if rc:
-            return True 
+            return True
 
         if rc is None:
-            return None 
+            return None
 
         return False
 
-
-    def writemsg( self, wfd, msg ):
+    def writemsg(self, wfd, msg):
         """
         Write message to stdin.
         Return True if successfully flushed
@@ -206,22 +199,21 @@ class WorkIOBuf(object):
         method if flush() returns True.
         """
 
-        nm = netstring.encode( msg )
-        rc = self.write_or_carry( wfd, nm )
+        nm = netstring.encode(msg)
+        rc = self.write_or_carry(wfd, nm)
         if rc is None:
-            # process died 
-            return None 
+            # process died
+            return None
 
         if not rc:
-            # carried 
-            return False 
+            # carried
+            return False
 
         # success!
         return True
 
-
     def proc_stdin(self):
-        return self.proc.stdin 
+        return self.proc.stdin
 
     def proc_stdout(self):
         return self.proc.stdout
@@ -230,22 +222,20 @@ class WorkIOBuf(object):
         return self.proc.pid
 
 
-
-class WorkpoolCoordinator( threading.Thread ):
+class WorkpoolCoordinator(threading.Thread):
 
     def __init__(self, wp):
-        super( WorkpoolCoordinator, self ).__init__()
+        super(WorkpoolCoordinator, self).__init__()
         self.wp = wp
         self.tick = time.time()
         self.d = 0
-        
+
         # to avoid wasting extra CPU waiting for nothing...
         self.prev_num_inp = 0
         self.prev_num_futs = 0
         self.backoff_delay = 0.01
 
-    
-    def run( self ):
+    def run(self):
         """
         Process coordinator: multiplex I/O on processes.
         """
@@ -258,69 +248,69 @@ class WorkpoolCoordinator( threading.Thread ):
             # who has to give us data?
             rfds = wp.get_stdout_fds()
             wfds = wp.get_stdin_fds()
-            ready_rfds, ready_wfds, _ = select.select( rfds, wfds, [], 1.0 )
+            ready_rfds, ready_wfds, _ = select.select(rfds, wfds, [], 1.0)
 
             for buf in wp.get_bufs():
 
                 # get all messages
                 if buf.proc_stdout() in ready_rfds:
-                    ready_rfds.remove( buf.proc_stdout() )
-                    msgs = buf.readmsgs( buf.proc_stdout() )
+                    ready_rfds.remove(buf.proc_stdout())
+                    msgs = buf.readmsgs(buf.proc_stdout())
 
                     if msgs is None:
                         # process died
-                        to_reap.append( buf.proc )
+                        to_reap.append(buf.proc)
 
                     else:
                         # dispatch to futures
                         for msg in msgs:
-                            key, payload = Workpool.parse_message( msg )
+                            key, payload = Workpool.parse_message(msg)
                             # log.debug("%s: Got %s" % (buf.proc_pid(), key))
                             if key is not None:
-                                wp.future_complete( key, payload )
+                                wp.future_complete(key, payload)
                             else:
-                                raise Exception( "Worker %s: Unparseable response: '%s'" % (buf.proc_pid(), msg) )
+                                raise Exception("Worker %s: Unparseable response: '%s'" % (buf.proc_pid(), msg))
 
             bufs = wp.get_bufs()
             cnt = 0
 
             for i in xrange(0, len(bufs)):
-               
+
                 # try to round-robin our requests
                 buf = bufs[(i + self.d) % len(bufs)]
 
                 # refill this process's input buffer with requests
                 if buf.proc_stdin() in ready_wfds:
-                     
-                    ready_wfds.remove( buf.proc_stdin() )
 
-                    rc = buf.flush( buf.proc_stdin() )
+                    ready_wfds.remove(buf.proc_stdin())
+
+                    rc = buf.flush(buf.proc_stdin())
                     if not rc:
                         if rc is None:
-                            # process died 
-                            to_reap.append( buf.proc )
+                            # process died
+                            to_reap.append(buf.proc)
                         else:
-                            # out of buffer space 
-                            continue 
-
-                    # if we're out of outstanding requests, then get the next one 
-                    if not wp.is_busy( buf.proc_pid() ):
-
-                        next_msg = wp.next_pending_input( buf.proc_pid() )
-                        if next_msg is None:
-                            # out of messages 
+                            # out of buffer space
                             continue
 
-                        rc = buf.writemsg( buf.proc_stdin(), next_msg )
+                    # if we're out of outstanding requests, then get the next one
+                    if not wp.is_busy(buf.proc_pid()):
+
+                        next_msg = wp.next_pending_input(buf.proc_pid())
+                        if next_msg is None:
+                            # out of messages
+                            continue
+
+                        rc = buf.writemsg(buf.proc_stdin(), next_msg)
                         if not rc:
                             if rc is None:
-                                # process died 
-                                to_reap.append( buf.proc )
+                                # process died
+                                to_reap.append(buf.proc)
                             else:
                                 # out of buffer space
                                 continue
 
-                        # put a message 
+                        # put a message
                         cnt += 1
 
             self.d += cnt
@@ -333,7 +323,7 @@ class WorkpoolCoordinator( threading.Thread ):
 
             # reap dead processes
             for p in list(set(to_reap)):
-                wp.reap_process( p )
+                wp.reap_process(p)
 
             if time.time() > self.tick:
                 # throttling
@@ -342,25 +332,24 @@ class WorkpoolCoordinator( threading.Thread ):
                 num_futs = wp.num_pending_outputs()
 
                 if self.prev_num_futs > 0 and self.prev_num_inp == num_inp and self.prev_num_futs == num_futs:
-                    # nothing happened.  sleep for a bit 
-                    time.sleep( self.backoff_delay )
-                    self.backoff_delay = min( self.backoff_delay * 2, 1.0 )
+                    # nothing happened.  sleep for a bit
+                    time.sleep(self.backoff_delay)
+                    self.backoff_delay = min(self.backoff_delay * 2, 1.0)
 
                 else:
                     self.backoff_delay = 0.01
 
-                self.prev_num_futs = num_futs 
+                self.prev_num_futs = num_futs
                 self.prev_inp = num_inp
 
                 if num_inp > 0 or num_futs > 0:
                     log.debug("%s requests to send; %s requests to receive" % (num_inp, num_futs))
 
 
-
 class Workpool(object):
 
-    def __init__(self, num_workers, worker_bin_path, worker_argv, worker_env=None ):
-        
+    def __init__(self, num_workers, worker_bin_path, worker_argv, worker_env=None):
+
         self.num_workers = num_workers
         self.worker_bin_path = worker_bin_path
         self.worker_argv = worker_argv
@@ -373,7 +362,7 @@ class Workpool(object):
         self.pending_input_lock = threading.Lock()
         self.pending_inputs = []
         self.in_progress = []   # list of PIDs that are working on messages
-        
+
         self.pending_output_lock = threading.Lock()
         self.pending_outputs = {}      # map message key to future
 
@@ -381,37 +370,34 @@ class Workpool(object):
             worker_env = default_worker_env
         else:
             tmp = {}
-            tmp.update( default_worker_env )
-            tmp.update( worker_env )
+            tmp.update(default_worker_env)
+            tmp.update(worker_env)
             worker_env = tmp
 
-        # start processes 
+        # start processes
         for i in xrange(0, num_workers):
 
-            p = subprocess.Popen( [worker_bin_path] + worker_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, env=worker_env, close_fds=True )
-            self.procs.append( p )
+            p = subprocess.Popen([self.worker_bin_path] + worker_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, env=worker_env, close_fds=True)
+            self.procs.append(p)
 
             # put into non-blocking mode
             for pipe in [p.stdin, p.stdout]:
-                fl = fcntl.fcntl( pipe.fileno(), fcntl.F_GETFL )
-                fcntl.fcntl( pipe.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK )
+                fl = fcntl.fcntl(pipe.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(pipe.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
             # assign work buffer
-            buf = WorkIOBuf( p )
-            self.bufs.append( buf )
-
+            buf = WorkIOBuf(p)
+            self.bufs.append(buf)
 
         # start coordinator
-        self.coordinator_thread = WorkpoolCoordinator( self )
+        self.coordinator_thread = WorkpoolCoordinator(self)
         self.coordinator_thread.start()
 
-    
     def close(self):
         """
         Stop sending data: close stdins
         """
         self.closed = True
-
 
     def is_closed(self):
         """
@@ -419,29 +405,25 @@ class Workpool(object):
         """
         return self.closed
 
-
     def is_running(self):
         """
         Is the pool processing requests?
         """
         return self.running
 
-
     def terminate(self):
         """
         Stop the workpool with SIGTERM
         """
         for p in self.procs:
-            p.send_signal( signal.SIGTERM )
-
+            p.send_signal(signal.SIGTERM)
 
     def kill(self):
         """
         Stop the workpool with SIGKILL
         """
         for p in self.procs:
-            p.send_signal( signal.SIGKILL )
-
+            p.send_signal(signal.SIGKILL)
 
     def join(self):
         """
@@ -453,7 +435,6 @@ class Workpool(object):
 
         # join with coordinator
         self.coordinator_thread.join()
-        
 
     def get_bufs(self):
         """
@@ -461,17 +442,15 @@ class Workpool(object):
         """
         return self.bufs
 
-
     def get_stdin_fds(self):
         """
         Get list of stdin file descriptors.
         """
         fds = []
         for p in self.procs:
-            fds.append( p.stdin )
+            fds.append(p.stdin)
 
         return fds
-
 
     def get_stdout_fds(self):
         """
@@ -479,12 +458,11 @@ class Workpool(object):
         """
         fds = []
         for p in self.procs:
-            fds.append( p.stdout )
+            fds.append(p.stdout)
 
         return fds
 
-
-    def next_pending_input( self, pid ):
+    def next_pending_input(self, pid):
         """
         Get the next pending input message to a process.
         """
@@ -497,22 +475,21 @@ class Workpool(object):
         self.pending_input_lock.release()
 
         if inp is not None:
-            key, payload = Workpool.parse_message( inp )
+            key, payload = Workpool.parse_message(inp)
 
             self.pending_output_lock.acquire()
-            if self.pending_outputs.has_key( key ):
+            if self.pending_outputs.has_key(key):
                 # record future's PID
                 self.pending_outputs[key].pid = pid
 
             # record that this process has a message
-            self.in_progress.append( pid )
+            self.in_progress.append(pid)
 
             self.pending_output_lock.release()
 
         return inp
 
-
-    def num_pending_inputs( self ):
+    def num_pending_inputs(self):
         """
         Count the number of outstanding messages to write to stdin
         """
@@ -524,8 +501,7 @@ class Workpool(object):
 
         return count
 
-    
-    def num_pending_outputs( self ):
+    def num_pending_outputs(self):
         """
         Count the number of outstanding futures
         """
@@ -534,11 +510,10 @@ class Workpool(object):
         count = len(self.pending_outputs.keys())
 
         self.pending_output_lock.release()
-        
+
         return count
 
-
-    def list_pending_future_keys( self ):
+    def list_pending_future_keys(self):
         """
         Get the list of future keys that are still pending
         """
@@ -550,8 +525,7 @@ class Workpool(object):
 
         return keys
 
-
-    def is_busy( self, pid ):
+    def is_busy(self, pid):
         """
         Does a process have an outstanding request?
         """
@@ -562,7 +536,6 @@ class Workpool(object):
         self.pending_output_lock.release()
 
         return ret
-
 
     def reap_process(self, proc):
         """
@@ -575,17 +548,16 @@ class Workpool(object):
 
         for key, future in self.pending_outputs.items():
             if future.pid == proc.pid:
-                future.put_result( OSError("Child %s died unexpectedly" % proc.pid) )
+                future.put_result(OSError("Child %s died unexpectedly" % proc.pid))
                 del self.pending_outputs[key]
 
         self.pending_output_lock.release()
 
         if proc in self.procs:
-            self.procs.remove( proc )
+            self.procs.remove(proc)
 
-
-    @classmethod 
-    def build_message( cls, key, payload ):
+    @classmethod
+    def build_message(cls, key, payload):
         """
         Create a worker message
         """
@@ -594,9 +566,8 @@ class Workpool(object):
 
         return "%s:%s" % (key, payload)
 
-    
     @classmethod
-    def parse_message( cls, line ):
+    def parse_message(cls, line):
         """
         Parse a worker message
         Return key, payload on success
@@ -610,9 +581,8 @@ class Workpool(object):
 
         return (key, payload)
 
-
-    @classmethod 
-    def worker_next_message( cls ):
+    @classmethod
+    def worker_next_message(cls):
         """
         Get the next message from stdin.
         Called by a worker.
@@ -623,13 +593,13 @@ class Workpool(object):
         dc = netstring.Decoder()
 
         # force stdin to be non-blocking
-        fl = fcntl.fcntl( sys.stdin.fileno(), fcntl.F_GETFL )
-        fcntl.fcntl( sys.stdin.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK )
+        fl = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
+        fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
         while True:
 
-            # wait for data 
-            ready_fds, _, _ = select.select( [sys.stdin], [], [], 0.1 )
+            # wait for data
+            ready_fds, _, _ = select.select([sys.stdin], [], [], 0.1)
 
             if len(ready_fds) == 0:
                 continue
@@ -647,39 +617,37 @@ class Workpool(object):
                 # EOF
                 return
 
-            for msg in dc.feed( buf ):
-                key, payload = cls.parse_message( msg )
+            for msg in dc.feed(buf):
+                key, payload = cls.parse_message(msg)
                 yield (key, payload)
 
-
-    @classmethod 
-    def worker_post_message( cls, key, payload ):
+    @classmethod
+    def worker_post_message(cls, key, payload):
         """
         Send a message to the workpool on stdout.
         Called by a worker.
         """
-        msg = cls.build_message( key, payload )
-        ns = netstring.encode( msg )
-        sys.stdout.write( ns )
+        msg = cls.build_message(key, payload)
+        ns = netstring.encode(msg)
+        sys.stdout.write(ns)
         sys.stdout.flush()
 
-
-    def apply_async( self, payload ):
+    def apply_async(self, payload):
         """
-        Send data to any process, and get back a 
+        Send data to any process, and get back a
         future that can be waited on and will evaluate
         to the result of the work.
-        
+
         Return a Future on success
         Return None on error (i.e. the pool is closed)
         """
 
         if self.closed:
             return None
-        
+
         if len(self.procs) == 0:
             raise Exception("All processes are dead")
-        
+
         # reserve an output slot
         key = "%016X" % random.randint(0, 2**64)
 
@@ -692,23 +660,22 @@ class Workpool(object):
             # try again
             key = "%016X" % random.randint(0, 2**64)
 
-        fut = WorkFuture( key, self )
-        self.pending_outputs[ key ] = fut 
+        fut = WorkFuture(key, self)
+        self.pending_outputs[ key ] = fut
 
         self.pending_output_lock.release()
 
         # queue input for consumption
-        message = Workpool.build_message( key, payload )
+        message = Workpool.build_message(key, payload)
         self.pending_input_lock.acquire()
 
-        self.pending_inputs.append( message )
+        self.pending_inputs.append(message)
 
         self.pending_input_lock.release()
 
         return fut
 
-    
-    def future_complete( self, key, payload ):
+    def future_complete(self, key, payload):
         """
         Fill in a future, finalizing it.
         Return True if dispatched
@@ -720,85 +687,87 @@ class Workpool(object):
 
         self.pending_output_lock.acquire()
 
-        if self.pending_outputs.has_key( key ):
+        if self.pending_outputs.has_key(key):
             fut = self.pending_outputs[ key ]
             del self.pending_outputs[key]
             rc = True
 
         else:
-            rc = False 
+            rc = False
 
         if fut is not None and fut.pid in self.in_progress:
-            self.in_progress.remove( fut.pid )
+            self.in_progress.remove(fut.pid)
 
         self.pending_output_lock.release()
 
         if fut is not None:
             # wake up waiter
-            fut.put_result( payload )
+            fut.put_result(payload)
 
         return rc
-
 
 # bitcoind just for this process
 process_local_bitcoind = None
 process_local_connect_bitcoind = None
 
-def multiprocess_bitcoind( bitcoind_opts, reset=False ):
-   """
-   Get a per-process bitcoind client.
-   """
-   
-   global process_local_bitcoind
-  
-   if reset: 
-      process_local_bitcoind = None
-  
-   if process_local_bitcoind is None:
-      # this proces does not yet have a bitcoind client.
-      # make one.
-      if bitcoind_opts is None:
-          # neither given nor globally set 
-          raise Exception("No bitcoind options set.")
-   
-      connect_bitcoind = multiprocess_connect_bitcoind()
-      process_local_bitcoind = connect_bitcoind( bitcoind_opts )
 
-   return process_local_bitcoind
+def multiprocess_bitcoind(bitcoind_opts, reset=False):
+    """
+    Get a per-process bitcoind client.
+    """
 
+    global process_local_bitcoind
 
-def multiprocess_batch_size( bitcoind_opts ):
-   """
-   How many blocks can we be querying at once?
-   """
-   num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
-   return num_workers * worker_batch_size
+    if reset:
+        process_local_bitcoind = None
+
+    if process_local_bitcoind is None:
+        # this proces does not yet have a bitcoind client.
+        # make one.
+        if bitcoind_opts is None:
+            # neither given nor globally set
+            raise Exception("No bitcoind options set.")
+
+        connect_bitcoind = multiprocess_connect_bitcoind()
+        process_local_bitcoind = connect_bitcoind(bitcoind_opts)
+
+    return process_local_bitcoind
 
 
-def multiprocess_pool( bitcoind_opts, python_filepath ):
-   """
-   Create a multiprocess pool to index the blockchain, given the path to the python file to run to receive commands
-   and the blockchain connection options.
-   """
-   num_workers, worker_batch_size = configure_multiprocessing( bitcoind_opts )
-   bitcoind_opts_environ = pickle.dumps( bitcoind_opts )
-   worker_env = {
+def multiprocess_batch_size(bitcoind_opts):
+    """
+    How many blocks can we be querying at once?
+    """
+    num_workers, worker_batch_size = configure_multiprocessing(bitcoind_opts)
+    return num_workers * worker_batch_size
+
+
+def multiprocess_pool(bitcoind_opts, python_filepath):
+    """
+    Create a multiprocess pool to index the blockchain, given the path to the python file to run to receive commands
+    and the blockchain connection options.
+    """
+    num_workers, worker_batch_size = configure_multiprocessing(bitcoind_opts)
+
+    bitcoind_opts_environ = pickle.dumps(bitcoind_opts)
+
+    worker_env = {
         "VIRTUALCHAIN_BITCOIND_OPTIONS": bitcoind_opts_environ
-   }
+    }
 
-   if os.environ.get("PYTHONPATH", None) is not None:
-       worker_env["PYTHONPATH"] = os.environ["PYTHONPATH"]
+    if os.environ.get("PYTHONPATH", None) is not None:
+        worker_env["PYTHONPATH"] = os.environ["PYTHONPATH"]
 
-   return Workpool( num_workers, "python", [python_filepath], worker_env=worker_env )
+    return Workpool(num_workers, "python", [python_filepath], worker_env=worker_env)
 
 
 def multiprocess_bitcoind_opts():
-   """
-   Get multiprocess bitcoind options
-   """
-   bitcoind_opts_pickled = os.getenv("VIRTUALCHAIN_BITCOIND_OPTIONS")
-   bitcoind_opts = pickle.loads( bitcoind_opts_pickled )
-   return bitcoind_opts
+    """
+    Get multiprocess bitcoind options
+    """
+    bitcoind_opts_pickled = os.getenv("VIRTUALCHAIN_BITCOIND_OPTIONS")
+    bitcoind_opts = pickle.loads(bitcoind_opts_pickled)
+    return bitcoind_opts
 
 
 def multiprocess_connect_bitcoind():
@@ -815,21 +784,21 @@ def multiprocess_connect_bitcoind():
             log.debug("Using '%s' to implement blockchain connection factory" % blockchain_connect_override_module)
 
             # either compiled or source...
-            mod_type = None 
+            mod_type = None
             if blockchain_connect_override_module.endswith(".pyc"):
                 mod_type = imp.PY_COMPILED
             elif blockchain_connect_override_module.endswith(".py"):
                 mod_type = imp.PY_SOURCE
             else:
                 raise Exception("Unsupported module type: '%s'" % blockchain_connect_override_module)
-                
+
             # find and load the module with the desired 'connect_bitcoind' method
             mod_fd = open(blockchain_connect_override_module, "r")
-            connect_blockchain_mod = imp.load_module("connect_blockchain", mod_fd, blockchain_connect_override_module, ("", 'r', mod_type) )
+            connect_blockchain_mod = imp.load_module("connect_blockchain", mod_fd, blockchain_connect_override_module, ("", 'r', mod_type))
 
             try:
                 process_local_connect_bitcoind = connect_blockchain_mod.connect_bitcoind
-                assert hasattr( process_local_connect_bitcoind, "__call__" )
+                assert hasattr(process_local_connect_bitcoind, "__call__")
             except:
                 raise Exception("Module '%s' has no callable 'connect_bitcoind' method" % blockchain_connect_override_module)
 
@@ -838,39 +807,39 @@ def multiprocess_connect_bitcoind():
             process_local_connect_bitcoind = blockchain.session.connect_bitcoind_impl
 
     return process_local_connect_bitcoind
- 
-
-def multiprocess_rpc_marshal( method_name, method_args ):
-   """
-   Marshal an RPC call into a request to be fed into a worker.
-   """
-   return pickle.dumps( [method_name] + method_args )
 
 
-def multiprocess_rpc_unmarshal( payload ):
-   """
-   Unmarshal an RPC call and arguments
-   Return (method_name, *method_args)
-   """
-   args = pickle.loads( payload )
-   return args[0], args[1:]
+def multiprocess_rpc_marshal(method_name, method_args):
+    """
+    Marshal an RPC call into a request to be fed into a worker.
+    """
+    return pickle.dumps([method_name] + method_args)
 
 
-def multiprocess_worker_main( mainloop_body ):
-   """
-   Main loop for a worker: dispatch messages to a main-loop body
-   """
-   for (key, payload) in Workpool.worker_next_message():
-       try:
-           mainloop_body( key, payload )
-       except:
-           print >> sys.stderr, "Worker %s exiting on exception" % os.getpid()
-           print >> sys.stderr, traceback.format_exc()
-           sys.stderr.flush()
-           break
+def multiprocess_rpc_unmarshal(payload):
+    """
+    Unmarshal an RPC call and arguments
+    Return (method_name, *method_args)
+    """
+    args = pickle.loads(payload)
+    return args[0], args[1:]
 
 
-def set_default_worker_env( worker_env ):
+def multiprocess_worker_main(mainloop_body):
+    """
+    Main loop for a worker: dispatch messages to a main-loop body
+    """
+    for (key, payload) in Workpool.worker_next_message():
+        try:
+            mainloop_body(key, payload)
+        except:
+            print >> sys.stderr, "Worker %s exiting on exception" % os.getpid()
+            print >> sys.stderr, traceback.format_exc()
+            sys.stderr.flush()
+            break
+
+
+def set_default_worker_env(worker_env):
     """
     Set the default environment variables for a worker.
     """
@@ -878,7 +847,7 @@ def set_default_worker_env( worker_env ):
     default_worker_env = worker_env
 
 
-def set_connect_bitcoind( connect_bitcoind ):
+def set_connect_bitcoind(connect_bitcoind):
     """
     Set default bitcoind connection factory.
     """
