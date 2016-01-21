@@ -37,7 +37,7 @@ setup(
     zip_safe=False,
     include_package_data=True,
     install_requires=[
-        'pybitcoin>=0.9.7'
+        'pybitcoin>=0.9.7',
         'ecdsa>=0.11',
         'pybitcoin>=0.9.8',
         'bitcoin>=1.1.39',
