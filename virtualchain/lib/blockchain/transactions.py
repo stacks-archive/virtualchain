@@ -40,6 +40,12 @@ import time
 import types
 import random
 import copy
+import bitcoin
+import binascii
+import json
+import pybitcoin
+import pprint
+from decimal import *
 import cPickle as pickle
 
 from bitcoinrpc.authproxy import JSONRPCException
@@ -464,7 +470,117 @@ def bandwidth_record( total_time, block_data ):
    }
 
 
-def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
+def tx_is_coinbase( tx ):
+    """
+    Is a transaction a coinbase transaction?
+    """
+    for inp in tx['vin']:
+        if 'coinbase' in inp.keys():
+            return True 
+
+    return False
+
+def tx_to_hex( tx ):
+     """
+     Convert a bitcoin-given transaction into its hex string.
+     Does NOT work on coinbase transactions.
+     """
+     tx_ins = []
+     tx_outs = []
+     for inp in tx['vin']:
+         next_inp = {
+            "outpoint": {
+               "index": int(inp['vout']),
+               "hash": str(inp['txid'])
+            }
+         }
+         if 'sequence' in inp:
+             next_inp['sequence'] = int(inp['sequence'])
+         else:
+             next_inp['sequence'] = pybitcoin.UINT_MAX
+
+         if 'scriptSig' in inp:
+             next_inp['script'] = str(inp['scriptSig']['hex'])
+         else:
+             next_inp['script'] = ""
+
+         tx_ins.append(next_inp)
+     
+     for out in tx['vout']:
+         next_out = {
+            'value': int(round(Decimal(out['value']) * Decimal(10**8))),
+            'script': str(out['scriptPubKey']['hex'])
+         }
+         tx_outs.append(next_out)
+
+     tx_fields = {
+        "locktime": int(tx['locktime']),
+        "version": int(tx['version']),
+        "ins": tx_ins,
+        "outs": tx_outs
+     }
+
+     tx_serialized = bitcoin.serialize( tx_fields )
+     return str(tx_serialized)
+
+
+def tx_verify( tx, tx_hash ):
+    """
+    Confirm that a bitcoin transaction has the given hash.
+    """
+    tx_serialized = tx_to_hex( tx )
+    tx_reversed_bin_hash = pybitcoin.bin_double_sha256( binascii.unhexlify(tx_serialized) )
+    tx_candidate_hash = binascii.hexlify(tx_reversed_bin_hash[::-1])
+
+    return tx_hash == tx_candidate_hash
+
+
+def block_header_to_hex( block_data, prev_hash ):
+    """
+    Calculate the hex form of a block's header, given its getblock information from bitcoind.
+    """
+    header_info = {
+       "version": block_data['version'],
+       "prevhash": prev_hash,
+       "merkle_root": block_data['merkleroot'],
+       "timestamp": block_data['time'],
+       "bits": int(block_data['bits'], 16),
+       "nonce": block_data['nonce'],
+       "hash": block_data['hash']
+    }
+
+    return bitcoin.serialize_header( header_info )
+
+
+def block_header_verify( block_data, prev_hash, block_hash ):
+    """
+    Verify whether or not bitcoind's block header matches the hash we expect.
+    """
+    serialized_header = block_header_to_hex( block_data, prev_hash )
+    candidate_hash_bin_reversed = pybitcoin.bin_double_sha256(binascii.unhexlify(serialized_header))
+    candidate_hash = binascii.hexlify( candidate_hash_bin_reversed[::-1] )
+
+    return block_hash == candidate_hash
+
+
+def block_verify( block_data ):
+    """
+    Given block data (a dict with 'merkleroot' hex string and 'tx' list of hex strings--i.e.
+    a block returned from bitcoind's getblock JSON RPC method), verify that the
+    transactions are consistent.
+
+    Return True on success
+    Return False if not.
+    """
+     
+    # verify block data txs 
+    m = pybitcoin.MerkleTree( block_data['tx'] )
+    root_hash = str(m.root())
+
+    return root_hash == str(block_data['merkleroot'])
+
+
+def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block_hash=None ):
    """
    Obtain the set of transactions over a range of blocks that have an OP_RETURN with nulldata.
    Each returned transaction record will contain:
@@ -489,9 +605,12 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
    # break work up into slices of blocks, so we don't run out of memory 
    slice_len = multiprocess_batch_size( bitcoind_opts )
    slice_count = 0
+   last_block_hash = first_block_hash
    
    while slice_count * slice_len < len(blocks_ids):
       
+      block_hashes = {}  # map block ID to block hash 
+      block_datas = {}    # map block hashes to block data
       block_hash_futures = []
       block_data_futures = []
       tx_futures = []
@@ -512,10 +631,9 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          block_times[block_number] = time.time() 
          
          block_hash_fut = getblockhash_async( workpool, bitcoind_opts, block_number )
-         block_hash_futures.append( (block_number, block_hash_fut) )
+         block_hash_futures.append( (block_number, block_hash_fut) ) 
    
-   
-      # coalesce all block hashes, and start getting each block's data
+      # coalesce all block hashes
       block_hash_time_start = time.time()
       block_hash_time_end = 0
       
@@ -525,18 +643,20 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
          block_hash = future_get_result( block_hash_fut, 10000000000000000L )
-        
+         block_hashes[block_number] = block_hash
+       
+         # start getting each block's data
          if block_hash is not None:
              block_data_fut = getblock_async( workpool, bitcoind_opts, block_hash )
              block_data_futures.append( (block_number, block_data_fut) )
 
          else:
              raise Exception("BUG: Block %s: no block hash" % block_number)
-      
+     
       block_data_time_start = time.time()
       block_data_time_end = 0
      
-      # coalesce block data, and get tx hashes 
+      # coalesce block data
       for i in xrange(0, len(block_data_futures)):
          
          block_number, block_data_fut = future_next( block_data_futures, lambda f: f[1] )
@@ -548,9 +668,47 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          if 'tx' not in block_data:
              raise Exception("BUG: No tx data in block %s" % block_number)
          
+         block_datas[ block_hashes[block_number] ] = block_data
+     
+
+      # verify blockchain headers
+      for i in xrange(0, len(block_slice)):
+          block_id = block_slice[i]
+          block_hash = block_hashes[block_id]
+
+          prev_block_hash = None
+          if i > 0:
+              prev_block_id = block_slice[i-1]
+              prev_block_hash = block_hashes[prev_block_id]
+
+          elif last_block_hash is not None:
+              prev_block_hash = last_block_hash 
+
+          else:
+              continue
+
+          if not block_header_verify( block_datas[block_hash], prev_block_hash, block_hash ):
+              serialized_header = block_header_to_hex( block_datas[block_hash], prev_block_hash )
+              candidate_hash_reversed = pybitcoin.bin_double_sha256(binascii.unhexlify(serialized_header))
+              candidate_hash = binascii.hexlify(candidate_hash_reversed[::-1])
+              raise Exception("Hash mismatch on block %s: got invalid block hash (expected %s, got %s)" % (block_id, block_hash, candidate_hash))
+
+      last_block_hash = block_hashes[ block_slice[-1] ]
+
+      for block_number in block_slice:
+         
+         block_hash = block_hashes[block_number]
+         block_data = block_datas[block_hash]
+         
+         # verify block data txs
+         rc = block_verify( block_data )
+         if not rc:
+             raise Exception("Hash mismatch on block %s: got invalid Merkle root (expected %s)" % (block_hash, block_data['merkleroot']))
+
+         # go get each transaction
          tx_hashes = block_data['tx']
          
-         log.debug("Get %s transactions from block %s" % (len(tx_hashes), block_number))
+         log.debug("Get %s transactions from block %s" % (len(tx_hashes), block_hash))
          
          # can get transactions asynchronously with a workpool (but preserve tx order!)
          if len(tx_hashes) > 0:
@@ -564,7 +722,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          else:
             
             raise Exception("BUG: Zero-transaction block %s" % block_number)
-            
+           
       block_tx_time_start = time.time()
       block_tx_time_end = 0
       
@@ -577,6 +735,14 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
          tx = future_get_result( tx_fut, 1000000000000000L )
          
+         #if len(tx['vin']) > 0 and 'coinbase' not in tx['vin'][0].keys():
+         if not tx_is_coinbase( tx ):
+
+             # verify non-coinbase transaction 
+             tx_hash = tx['txid']
+             if not tx_verify( tx, tx_hash ):
+                 raise Exception("Transaction hash mismatch in %s (index %s) in block %s" % (tx['txid'], tx_index, block_number))
+
          if tx and has_nulldata(tx):
             
             # go get input transactions for this transaction (since it's the one with nulldata, i.e., a virtual chain operation),
@@ -590,8 +756,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
             # NOTE will be called multiple times; we expect the last write to be the total time taken by this block
             total_time = time.time() - block_times[ block_number ]
             block_bandwidth[ block_number ] = bandwidth_record( total_time, None )
-            
-      
+             
       block_nulldata_tx_time_start = time.time()
       block_nulldata_tx_time_end = 0
       
@@ -607,13 +772,25 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids ):
          senders = []
          ordered_senders = []
          
-         # gather this tx's nulldata queries
+         # gather this tx's nulldata-bearing transactions
          for i in xrange(0, len(nulldata_tx_futs_and_output_idxs)):
             
             input_idx, input_tx_fut, tx_output_index = future_next( nulldata_tx_futs_and_output_idxs, lambda f: f[1] )
             
             # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
             input_tx = future_get_result( input_tx_fut, 1000000000000000L )
+            input_tx_hash = input_tx['txid']
+
+            # verify (but skip coinbase) 
+            if not tx_is_coinbase( input_tx ):
+                try:
+                    if not tx_verify( input_tx, input_tx_hash ):
+                        raise Exception("Input transaction hash mismatch %s from tx %s (index %s)" % (input_tx['txid'], tx['txid'], tx_output_index))
+                except:
+                    pp = pprint.PrettyPrinter()
+                    pp.pprint(input_tx)
+                    raise
+
             sender, amount_in = get_sender_and_amount_in_from_txn( input_tx, tx_output_index )
             
             if sender is None or amount_in is None:
