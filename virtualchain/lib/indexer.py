@@ -158,14 +158,23 @@ class StateEngine( object ):
         self.pool = None
         self.rejected = {}
 
+        firsttime = True
+
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
         
         # if we crashed during a commit, try to finish
         rc = self.commit( startup=True )
         if not rc:
-           log.error("Failed to commit partial data.  Rolling back.")
+           log.error("Failed to commit partial data.  Rolling back and aborting.")
            self.rollback()
+           sys.exit(1)
+
+        # can be missing all files, or none of them 
+        for fp in [consensus_snapshots_filename, lastblock_filename]:
+            if os.path.exists( fp ):
+                # starting with existing data
+                firsttime = False
         
         # attempt to load the snapshots 
         if os.path.exists( consensus_snapshots_filename ):
@@ -179,9 +188,14 @@ class StateEngine( object ):
                      self.consensus_hashes = db_dict['snapshots']
                  
            except Exception, e:
-              log.error("Failed to read consensus snapshots at '%s'" % consensus_snapshots_filename )
-              raise e
-             
+              log.error("FATAL: Failed to read consensus snapshots at '%s'. Aborting." % consensus_snapshots_filename )
+              log.exception(e)
+              sys.exit(1)
+            
+        elif not firsttime:
+            log.error("FATAL: No such file or directory: %s" % consensus_snapshots_filename )
+            sys.exit(1)
+
         # what was the last block processed?
         if os.path.exists( lastblock_filename ):
            try:
@@ -190,9 +204,14 @@ class StateEngine( object ):
                  self.lastblock = int(lastblock_str)
               
            except Exception, e:
-              log.error("Failed to read last block number at '%s'" % lastblock_filename )
-              raise e
+              log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
+              log.exception(e)
+              sys.exit(1)
           
+        elif not firsttime:
+            log.error("FATAL: No such file or directory: %s" % lastblock_filename )
+            sys.exit(1)
+
           
     def rollback( self ):
         """
