@@ -303,22 +303,31 @@ class StateEngine( object ):
         tmp_snapshot_filename = (config.get_snapshots_filename() + ".tmp")
         tmp_lastblock_filename = (config.get_lastblock_filename() + ".tmp")
         
-        with open(tmp_snapshot_filename, 'w') as f:
-            db_dict = {
-               'snapshots': self.consensus_hashes
-            }
-            f.write(json.dumps(db_dict))
-            f.flush()
-        
-        # put this last...
-        with open(tmp_lastblock_filename, "w") as lastblock_f:
-            lastblock_f.write("%s" % block_id)
-            lastblock_f.flush()
+        try:
+            with open(tmp_snapshot_filename, 'w') as f:
+                db_dict = {
+                   'snapshots': self.consensus_hashes
+                }
+                f.write(json.dumps(db_dict))
+                f.flush()
+            
+            # put this last...
+            with open(tmp_lastblock_filename, "w") as lastblock_f:
+                lastblock_f.write("%s" % block_id)
+                lastblock_f.flush()
+
+        except:
+            # failed to save
+            # fail fast and loud 
+            log.error("FATAL: Failed to stage data for saving at block %s" % (block_id))
+            sys.exit(1)
+            return False
 
         rc = self.impl.db_save( block_id, consensus_hash, pending_ops, tmp_db_filename, db_state=self.state )
         if not rc:
-            # failed to save 
-            log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
+            # failed to save
+            # fail fast and loud
+            log.error("FATAL: Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
             
             try:
                 os.unlink( tmp_lastblock_filename )
@@ -330,13 +339,15 @@ class StateEngine( object ):
             except:
                 pass 
             
+            sys.exit(1)
             return False
        
         rc = self.commit( backup=backup )
         if not rc:
-            log.error("Failed to commit data at block %s.  Rolling back." % block_id )
+            log.error("Failed to commit data at block %s.  Rolling back and aborting." % block_id )
             
             self.rollback()
+            sys.exit(1)
             return False 
         
         else:
@@ -692,8 +703,8 @@ class StateEngine( object ):
         implementation's state.  Cache the 
         resulting data to disk.
        
-        Return the consensus hash for this block.
-        Return None on error
+        Return the consensus hash for this block on success.
+        Exit on failure.
         """
         
         log.debug("Process block %s (%s txs with nulldata)" % (block_id, len(ops)))
@@ -713,7 +724,9 @@ class StateEngine( object ):
 
         rc = self.save( block_id, consensus_hash, sanitized_ops, backup=backup )
         if not rc:
-            log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
+            # failure to save is fatal
+            log.error("FATAL: Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
+            sys.exit(1)
             return None 
         
         return consensus_hash
@@ -779,7 +792,8 @@ class StateEngine( object ):
         
         Return True on success 
         Return False on error
-        Raise an exception on irrecoverable error--the caller should simply try again.
+        Raise an exception on recoverable error--the caller should simply try again.
+        Exit on irrecoverable error--do not try to make forward progress
         """
         
         first_block_id = state_engine.lastblock + 1
@@ -829,9 +843,10 @@ class StateEngine( object ):
                     
                     if consensus_hash is None:
                         
-                        # fatal error 
+                        # failure to save is a fatal error 
                         rc = False
-                        log.error("Failed to process block %d" % processed_block_id )
+                        log.error("Failed to process block %d; aborting" % processed_block_id )
+                        sys.exit(1)
                         break
             
             log.debug("Last block is %s" % state_engine.lastblock )
