@@ -795,7 +795,7 @@ def multiprocess_pool( bitcoind_opts, python_filepath ):
    if os.environ.get("PYTHONPATH", None) is not None:
        worker_env["PYTHONPATH"] = os.environ["PYTHONPATH"]
 
-   return Workpool( num_workers, "python", [python_filepath], worker_env=worker_env )
+   return Workpool( num_workers, sys.executable, [python_filepath], worker_env=worker_env )
 
 
 def multiprocess_bitcoind_opts():
