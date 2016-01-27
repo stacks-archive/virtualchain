@@ -303,22 +303,30 @@ class StateEngine( object ):
         tmp_snapshot_filename = (config.get_snapshots_filename() + ".tmp")
         tmp_lastblock_filename = (config.get_lastblock_filename() + ".tmp")
         
-        with open(tmp_snapshot_filename, 'w') as f:
-            db_dict = {
-               'snapshots': self.consensus_hashes
-            }
-            f.write(json.dumps(db_dict))
-            f.flush()
-        
-        # put this last...
-        with open(tmp_lastblock_filename, "w") as lastblock_f:
-            lastblock_f.write("%s" % block_id)
-            lastblock_f.flush()
+        try:
+            with open(tmp_snapshot_filename, 'w') as f:
+                db_dict = {
+                   'snapshots': self.consensus_hashes
+                }
+                f.write(json.dumps(db_dict))
+                f.flush()
+            
+            # put this last...
+            with open(tmp_lastblock_filename, "w") as lastblock_f:
+                lastblock_f.write("%s" % block_id)
+                lastblock_f.flush()
+
+        except:
+            # failure to save is fatal 
+            log.error("FATAL: Could not stage data for block %s" % block_id)
+            sys.exit(1)
+            return False
 
         rc = self.impl.db_save( block_id, consensus_hash, pending_ops, tmp_db_filename, db_state=self.state )
         if not rc:
             # failed to save 
-            log.error("Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
+            # this is a fatal error
+            log.error("FATAL: Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
             
             try:
                 os.unlink( tmp_lastblock_filename )
@@ -330,13 +338,16 @@ class StateEngine( object ):
             except:
                 pass 
             
+            sys.exit(1)
             return False
        
         rc = self.commit( backup=backup )
         if not rc:
-            log.error("Failed to commit data at block %s.  Rolling back." % block_id )
+            # failure to save is fatal
+            log.error("Failed to commit data at block %s.  Rolling back and aborting." % block_id )
             
             self.rollback()
+            sys.exit(1)
             return False 
         
         else:
@@ -713,7 +724,9 @@ class StateEngine( object ):
 
         rc = self.save( block_id, consensus_hash, sanitized_ops, backup=backup )
         if not rc:
-            log.error("Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
+            # failure to save is fatal
+            log.error("FATAL: Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
+            sys.exit(1)
             return None 
         
         return consensus_hash
@@ -831,7 +844,8 @@ class StateEngine( object ):
                         
                         # fatal error 
                         rc = False
-                        log.error("Failed to process block %d" % processed_block_id )
+                        log.error("FATAL: Failed to process block %d" % processed_block_id )
+                        sys.exit(1)
                         break
             
             log.debug("Last block is %s" % state_engine.lastblock )
