@@ -3,8 +3,8 @@
 """
      Virtualchain
      ~~~~~
-     copyright: (c) 2014 by Halfmoon Labs, Inc.
-     copyright: (c) 2015 by Blockstack.org
+     copyright: (c) 2014-15 by Halfmoon Labs, Inc.
+     copyright: (c) 2016 by Blockstack.org
 
      This file is part of Virtualchain
 
@@ -48,6 +48,7 @@ state_engine = None
 
 # global flag indicating that we're running
 running = False
+
 
 def sync_virtualchain(bitcoind_opts, last_block, state_engine):
     """
