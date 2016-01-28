@@ -25,7 +25,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='virtualchain',
-    version='0.0.8',
+    version='0.0.8.1',
     url='https://github.com/blockstack/virtualchain',
     license='GPLv3',
     author='Blockstack.org',
