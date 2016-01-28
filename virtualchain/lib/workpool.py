@@ -42,6 +42,7 @@ import cPickle as pickle
 import blockchain.session
 import copy
 import imp
+import platform 
 
 log = blockchain.session.log
 
@@ -374,7 +375,8 @@ class Workpool(object):
             tmp.update(worker_env)
             worker_env = tmp
 
-        if 'PYTHONPATH' in worker_env:
+        if 'PYTHONPATH' in worker_env and platform.system().lower() == 'darwin':
+            # Mac OS X-specific work-around
             self.worker_bin_path = worker_env['PYTHONPATH'] + "/python"
 
         # start processes
