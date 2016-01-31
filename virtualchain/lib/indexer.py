@@ -158,14 +158,23 @@ class StateEngine( object ):
         self.pool = None
         self.rejected = {}
 
+        firsttime = True
+
         consensus_snapshots_filename = config.get_snapshots_filename()
         lastblock_filename = config.get_lastblock_filename()
         
         # if we crashed during a commit, try to finish
         rc = self.commit( startup=True )
         if not rc:
-           log.error("Failed to commit partial data.  Rolling back.")
+           log.error("Failed to commit partial data.  Rolling back and aborting.")
            self.rollback()
+           sys.exit(1)
+
+        # can be missing all files, or none of them 
+        for fp in [consensus_snapshots_filename, lastblock_filename]:
+            if os.path.exists( fp ):
+                # starting with existing data
+                firsttime = False
         
         # attempt to load the snapshots 
         if os.path.exists( consensus_snapshots_filename ):
@@ -179,9 +188,14 @@ class StateEngine( object ):
                      self.consensus_hashes = db_dict['snapshots']
                  
            except Exception, e:
-              log.error("Failed to read consensus snapshots at '%s'" % consensus_snapshots_filename )
-              raise e
-             
+              log.error("FATAL: Failed to read consensus snapshots at '%s'. Aborting." % consensus_snapshots_filename )
+              log.exception(e)
+              sys.exit(1)
+            
+        elif not firsttime:
+            log.error("FATAL: No such file or directory: %s" % consensus_snapshots_filename )
+            sys.exit(1)
+
         # what was the last block processed?
         if os.path.exists( lastblock_filename ):
            try:
@@ -190,9 +204,14 @@ class StateEngine( object ):
                  self.lastblock = int(lastblock_str)
               
            except Exception, e:
-              log.error("Failed to read last block number at '%s'" % lastblock_filename )
-              raise e
+              log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
+              log.exception(e)
+              sys.exit(1)
           
+        elif not firsttime:
+            log.error("FATAL: No such file or directory: %s" % lastblock_filename )
+            sys.exit(1)
+
           
     def rollback( self ):
         """
@@ -317,16 +336,15 @@ class StateEngine( object ):
                 lastblock_f.flush()
 
         except:
-            # failed to save
-            # fail fast and loud 
-            log.error("FATAL: Failed to stage data for saving at block %s" % (block_id))
+            # failure to save is fatal 
+            log.error("FATAL: Could not stage data for block %s" % block_id)
             sys.exit(1)
             return False
 
         rc = self.impl.db_save( block_id, consensus_hash, pending_ops, tmp_db_filename, db_state=self.state )
         if not rc:
-            # failed to save
-            # fail fast and loud
+            # failed to save 
+            # this is a fatal error
             log.error("FATAL: Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
             
             try:
@@ -449,7 +467,7 @@ class StateEngine( object ):
            all_values.append( str(len(str(field_value))) + ":" + str(field_value) )
 
         if len(missing) > 0:
-           print json.dumps( opdata, indent=4 )
+           print >> sys.stderr, json.dumps( opdata, indent=4 )
            raise Exception("BUG: missing fields '%s'" % (",".join(missing)))
 
         if verbose:
@@ -845,7 +863,7 @@ class StateEngine( object ):
                         
                         # failure to save is a fatal error 
                         rc = False
-                        log.error("Failed to process block %d; aborting" % processed_block_id )
+                        log.error("FATAL: Failed to process block %d" % processed_block_id )
                         sys.exit(1)
                         break
             

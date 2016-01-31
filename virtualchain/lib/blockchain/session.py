@@ -71,6 +71,9 @@ if not globals().has_key('log'):
         log.propagate = False
         log.addHandler(console)
 
+# disable debug logging from bitcoinrpc
+bitcoinrpc_logger = logging.getLogger("BitcoinRPC")
+bitcoinrpc_logger.setLevel(logging.CRITICAL)
 
 class BitcoindConnection( httplib.HTTPSConnection ):
    """
