@@ -373,7 +373,7 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, tx ):
     we want to acquire each input's nulldata, and for that, we 
     need the raw transaction data for the input.
     
-    However, in order to identify a primary sender, we need to 
+    However, in order to preserve the (sender, tx) relation, we need to 
     preserve the order in which the input transactions occurred.
     To do so, we tag each future with the index into the transaction's 
     vin list, so once the futures have been finalized, we'll have an 
@@ -588,7 +588,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
    * vout (list of outputs from bitcoind)
    * txid (transaction ID, as a hex string)
    * txindex (transaction index in the block)
-   * senders (a list of {"script_pubkey":, "amount":, and "addresses":} dicts; the "script_pubkey" field is the hex-encoded op script).
+   * senders (a list of {"script_pubkey":, "amount":, "addresses":} dicts in order by input; the "script_pubkey" field is the hex-encoded op script).
    * fee (total amount sent)
    * nulldata (input data to the transaction's script; encodes virtual chain operations)
    
@@ -765,7 +765,8 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          
          if ('vin' not in tx) or ('vout' not in tx) or ('txid' not in tx):
             continue 
-         
+        
+         inputs = tx['vin']
          outputs = tx['vout']
          
          total_in = 0   # total input paid
@@ -804,6 +805,10 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          # sort on input_idx, so the list of senders matches the given transaction's list of inputs
          ordered_senders.sort()
          senders = [sender for (_, sender) in ordered_senders]
+
+         # sanity check...
+         if len(senders) != len(inputs):
+             raise Exception("Sender/inputs mismatch: %s != %s\n" % (len(senders), len(inputs)))
          
          total_out = get_total_out( outputs )
          nulldata = get_nulldata( tx )
