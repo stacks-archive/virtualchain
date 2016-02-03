@@ -522,7 +522,7 @@ class StateEngine( object ):
         while k - (2**i - 1) >= self.impl.get_first_block_id():
             prev_block = k - (2**i - 1)
             prev_ch = self.get_consensus_at( prev_block )
-            log.debug("Snapshotting block %s: consensus hash of %s is %s" % (block_id, prev_block))
+            log.debug("Snapshotting block %s: consensus hash of %s is %s" % (block_id, prev_block, prev_ch))
 
             if prev_ch is None:
                 log.error("BUG: None consensus for %s" % prev_block )
