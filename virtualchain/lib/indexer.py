@@ -514,7 +514,6 @@ class StateEngine( object ):
         
         serialized_ops = []
         for opdata in pending_ops['virtualchain_ordered']:
-            # serialized_record = self.impl.db_serialize( opdata['virtualchain_opcode'], opdata, db_state=self.state )
             serialized_record = StateEngine.serialize_op( opdata['virtualchain_opcode'], opdata, self.opfields )
             serialized_ops.append( serialized_record )
 
@@ -522,7 +521,14 @@ class StateEngine( object ):
         k = block_id
         i = 1
         while k - (2**i - 1) >= self.impl.get_first_block_id():
-            prev_ch = self.get_consensus_at( k - (2**i - 1) )
+            prev_block = k - (2**i - 1)
+            prev_ch = self.get_consensus_at( prev_block )
+            log.debug("Snapshotting block %s: consensus hash of %s is %s" % (block_id, prev_block))
+
+            if prev_ch is None:
+                log.error("BUG: None consensus for %s" % prev_block )
+                sys.exit(1)
+
             previous_consensus_hashes.append( prev_ch )
             i += 1
 
