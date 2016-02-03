@@ -160,8 +160,8 @@ class StateEngine( object ):
 
         firsttime = True
 
-        consensus_snapshots_filename = config.get_snapshots_filename()
-        lastblock_filename = config.get_lastblock_filename()
+        consensus_snapshots_filename = config.get_snapshots_filename(impl=impl)
+        lastblock_filename = config.get_lastblock_filename(impl=impl)
         
         # if we crashed during a commit, try to finish
         rc = self.commit( startup=True )
@@ -241,9 +241,9 @@ class StateEngine( object ):
         It is safe to call this method repeatedly until it returns True.
         """
 
-        tmp_db_filename = config.get_db_filename() + ".tmp"
-        tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
-        tmp_lastblock_filename = config.get_lastblock_filename() + ".tmp"
+        tmp_db_filename = config.get_db_filename(impl=self.impl) + ".tmp"
+        tmp_snapshot_filename = config.get_snapshots_filename(impl=self.impl) + ".tmp"
+        tmp_lastblock_filename = config.get_lastblock_filename(impl=self.impl) + ".tmp"
         
         if not os.path.exists( tmp_lastblock_filename ) and (os.path.exists(tmp_db_filename) or os.path.exists(tmp_snapshot_filename)):
             # we did not successfully stage the write.
@@ -273,7 +273,7 @@ class StateEngine( object ):
         backup_time = int(time.time() * 1000000)
 
         for tmp_filename, filename in zip( [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
-                                           [config.get_lastblock_filename(), config.get_snapshots_filename(), config.get_db_filename()] ):
+                                           [config.get_lastblock_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_db_filename(impl=self.impl)] ):
                
             if not os.path.exists( tmp_filename ):
                 continue  
@@ -318,9 +318,9 @@ class StateEngine( object ):
            raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
         
         # stage data to temporary files
-        tmp_db_filename = (config.get_db_filename() + ".tmp")
-        tmp_snapshot_filename = (config.get_snapshots_filename() + ".tmp")
-        tmp_lastblock_filename = (config.get_lastblock_filename() + ".tmp")
+        tmp_db_filename = (config.get_db_filename(impl=self.impl) + ".tmp")
+        tmp_snapshot_filename = (config.get_snapshots_filename(impl=self.impl) + ".tmp")
+        tmp_lastblock_filename = (config.get_lastblock_filename(impl=self.impl) + ".tmp")
         
         try:
             with open(tmp_snapshot_filename, 'w') as f:
@@ -513,7 +513,6 @@ class StateEngine( object ):
         
         serialized_ops = []
         for opdata in pending_ops['virtualchain_ordered']:
-            # serialized_record = self.impl.db_serialize( opdata['virtualchain_opcode'], opdata, db_state=self.state )
             serialized_record = StateEngine.serialize_op( opdata['virtualchain_opcode'], opdata, self.opfields )
             serialized_ops.append( serialized_record )
 
@@ -521,7 +520,14 @@ class StateEngine( object ):
         k = block_id
         i = 1
         while k - (2**i - 1) >= self.impl.get_first_block_id():
-            prev_ch = self.get_consensus_at( k - (2**i - 1) )
+            prev_block = k - (2**i - 1)
+            prev_ch = self.get_consensus_at( prev_block )
+            log.debug("Snapshotting block %s: consensus hash of %s is %s" % (block_id, prev_block))
+
+            if prev_ch is None:
+                log.error("BUG: None consensus for %s" % prev_block )
+                sys.exit(1)
+
             previous_consensus_hashes.append( prev_ch )
             i += 1
 
@@ -581,7 +587,7 @@ class StateEngine( object ):
         # looks like a valid op.  Try to parse it.
         op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
         
-        op = self.impl.db_parse( block_id, op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state )
+        op = self.impl.db_parse( block_id, tx['txid'], tx['txindex'], op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state )
         
         if op is None:
             # not valid 
@@ -817,7 +823,7 @@ class StateEngine( object ):
         first_block_id = state_engine.lastblock + 1
         if first_block_id >= end_block_id:
             # built 
-            log.debug("Up-to-date")
+            log.debug("Up-to-date (%s >= %s)" % (first_block_id, end_block_id))
             return True 
 
         num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
