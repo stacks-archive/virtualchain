@@ -157,7 +157,7 @@ class StateEngine( object ):
         self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
         self.rejected = {}
-        self.expected_snapshots = {}
+        self.expected_snapshots = expected_snapshots
 
         firsttime = True
 
