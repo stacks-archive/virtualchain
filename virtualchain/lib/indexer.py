@@ -892,7 +892,7 @@ class StateEngine( object ):
                     if state_engine.get_consensus_at( processed_block_id ) is not None:
                         raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
 
-                    ops = state_engine.parse_block( block_id, txs )
+                    ops = state_engine.parse_block( processed_block_id, txs )
                     consensus_hash = state_engine.process_block( processed_block_id, ops )
                     
                     log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
