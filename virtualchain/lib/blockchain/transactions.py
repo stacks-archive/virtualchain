@@ -772,6 +772,10 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          total_in = 0   # total input paid
          senders = []
          ordered_senders = []
+
+         if tx_is_coinbase( tx ):
+             # skip coinbase 
+             continue
          
          # gather this tx's nulldata-bearing transactions
          for i in xrange(0, len(nulldata_tx_futs_and_output_idxs)):
