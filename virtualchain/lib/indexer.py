@@ -109,7 +109,7 @@ class StateEngine( object ):
     """
     
 
-    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={} ):
+    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={} ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -157,6 +157,7 @@ class StateEngine( object ):
         self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
         self.rejected = {}
+        self.expected_snapshots = {}
 
         firsttime = True
 
@@ -903,6 +904,15 @@ class StateEngine( object ):
                         log.error("FATAL: Failed to process block %d" % processed_block_id )
                         sys.exit(1)
                         break
+
+                    # sanity check, if given 
+                    expected_consensus_hash = state_engine.get_expected_consensus_at( processed_block_id )
+                    if expected_consensus_hash is not None:
+                        if str(consensus_hash) != str(expected_consensus_hash):
+                            rc = False
+                            log.error("FATAL: DIVERGENCE DETECTED AT %s: %s != %s" % (processed_block_id, consensus_hash, expected_consensus_hash))
+                            sys.exit(1)
+                            break
             
             log.debug("Last block is %s" % state_engine.lastblock )
 
@@ -933,6 +943,13 @@ class StateEngine( object ):
         Get the consensus hash at a given block
         """
         return self.consensus_hashes.get( str(block_id), None )
+
+
+    def get_expected_consensus_at( self, block_id ):
+        """
+        Get the expected consensus hash at a given block
+        """
+        return self.expected_snapshots.get( str(block_id), None )
 
 
     def get_block_from_consensus( self, consensus_hash ):
