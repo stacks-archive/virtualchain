@@ -467,7 +467,7 @@ class StateEngine( object ):
            all_values.append( str(len(str(field_value))) + ":" + str(field_value) )
 
         if len(missing) > 0:
-           print >> sys.stderr, json.dumps( opdata, indent=4 )
+           log.error("Missing fields; dump follows:\n%s" % json.dumps( opdata, indent=4, sort_keys=True ))
            raise Exception("BUG: missing fields '%s'" % (",".join(missing)))
 
         if verbose:
@@ -478,7 +478,7 @@ class StateEngine( object ):
         return opcode + ":" + field_values
 
 
-    def snapshot( self, block_id, pending_ops ):
+    def snapshot( self, block_id, oplist ):
         """
         Given the currnet block ID and the set of operations committed,
         find the consensus hash that represents the state of the virtual chain.
@@ -512,7 +512,7 @@ class StateEngine( object ):
         log.debug("Snapshotting block %s" % (block_id) )
         
         serialized_ops = []
-        for opdata in pending_ops['virtualchain_ordered']:
+        for opdata in oplist:
             serialized_record = StateEngine.serialize_op( opdata['virtualchain_opcode'], opdata, self.opfields )
             serialized_ops.append( serialized_record )
 
@@ -638,9 +638,9 @@ class StateEngine( object ):
         
         for k in op.keys():
             if str(k) not in RESERVED_KEYS:
-                sanitized[str(k)] = op[k]
+                sanitized[str(k)] = copy.deepcopy(op[k])
             else:
-                reserved[str(k)] = op[k]
+                reserved[str(k)] = copy.deepcopy(op[k])
                 
         return sanitized, reserved
   
@@ -652,7 +652,21 @@ class StateEngine( object ):
         """
         return self.remove_reserved_keys( op )[0]
 
-            
+
+    def log_accept( block_id, vtxindex, opcode, op ):
+        """
+        Log an accepted operation
+        """
+        log.debug("ACCEPT op %s at (%s, %s) (%s)" % (opcode, block_id, vtxindex, json.dumps(op, sort_keys=True)))
+
+
+    def log_reject( block_id, vtxindex, opcode, op ):
+        """
+        Log a rejected operation
+        """
+        log.debug("REJECT op %s (%s)" % (opcode, json.dumps(op, sort_keys=True)))
+ 
+
     def process_ops( self, block_id, ops ):
         """
         Given a transaction-ordered sequence of parsed operations,
@@ -673,37 +687,54 @@ class StateEngine( object ):
         new_ops['virtualchain_ordered'] = []
         new_ops['virtualchain_all_ops'] = ops
 
+        to_commit_sanitized = []
+        to_commit_reserved = []
+
+        # let the implementation do an initial scan over the blocks 
+        initial_scan = []
         for i in xrange(0, len(ops)):
 
-            op = ops[i]
-            op_sanitized, reserved = self.remove_reserved_keys( op )
+            op_data = ops[i]
+            op_sanitized, _ = self.remove_reserved_keys( op_data )
+            initial_scan.append( copy.deepcopy( op_sanitized ) )
+
+        self.impl.db_scan_block( block_id, initial_scan, db_state=self.state )
+
+        # check each operation 
+        for i in xrange(0, len(ops)):
+            op_data = ops[i]
+            op_sanitized, reserved = self.remove_reserved_keys( op_data )
             opcode = reserved['virtualchain_opcode']
 
-            # check this op...
-            rc = self.impl.db_check( block_id, new_ops, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
+            # check this op
+            rc = self.impl.db_check( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], to_commit_sanitized, db_state=self.state )
             if rc:
 
-                 # good to commit
-                 # db_commit can give back a list of opcodes for this transaction, so take them in the order they come
-                 new_op_list = self.impl.db_commit( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
-                 if type(new_op_list) != list:
-                     new_op_list = [new_op_list]
+                # commit this op
+                new_op_list = self.impl.db_commit( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
+                if type(new_op_list) != list:
+                    new_op_list = [new_op_list]
 
-                 for new_op in new_op_list:
-                     if new_op is not None:
+                for new_op in new_op_list:
+                    if new_op is not None:
                         if type(new_op) == dict:
-                            
-                            # externally-visible state transition
-                            new_op.update( reserved )
 
+                            # externally-visible state transition 
+                            to_commit_sanitized_op = copy.deepcopy( new_op )
+                            to_commit_sanitized.append( to_commit_sanitized_op )
+
+                            new_op.update( reserved )
                             new_ops[ opcode ].append( new_op )
                             new_ops['virtualchain_ordered'].append( new_op )
 
                         else:
-                            # internal state transition--nothing to snapshot for this op
+                            # internal state transition 
                             continue
 
+            else:
+                self.log_reject( block_id, reserved['virtualchain_txindex'], opcode, copy.deepcopy(op_sanitized))
 
+        
         # final commit
         # the implementation has a chance here to feed any extra data into the consensus hash with this call
         # (e.g. to affect internal state transitions that occur as seconary, holistic consequences to the sequence
@@ -736,7 +767,7 @@ class StateEngine( object ):
         new_ops = self.process_ops( block_id, ops )
         sanitized_ops = {}  # for save()
 
-        consensus_hash = self.snapshot( block_id, new_ops )
+        consensus_hash = self.snapshot( block_id, new_ops['virtualchain_ordered'] )
 
         for op in new_ops.keys():
 
