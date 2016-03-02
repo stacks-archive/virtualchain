@@ -109,7 +109,7 @@ class StateEngine( object ):
     """
     
 
-    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, resume_vtxindex=0 ):
+    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, resume_offset=0 ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -160,7 +160,7 @@ class StateEngine( object ):
         self.expected_snapshots = expected_snapshots['snapshots']
         self.backup_frequency = backup_frequency
         self.backup_max_age = backup_max_age
-        self.resume_vtxindex = resume_vtxindex
+        self.resume_offset = resume_offset
 
         firsttime = True
 
@@ -960,14 +960,14 @@ class StateEngine( object ):
         
         self.save_num_vtxs( block_id, len(ops) )
 
-        if self.resume_vtxindex > 0:
-            log.debug("Resuming from %s" % self.resume_vtxindex)
-            ops = ops[self.resume_vtxindex:]
+        if self.resume_offset > 0:
+            log.debug("Resuming from %s" % self.resume_offset)
+            ops = ops[self.resume_offset:]
 
         new_ops = self.process_ops( block_id, ops )
 
         self.clear_num_vtxs()
-        self.resume_vtxindex = 0
+        self.resume_offset = 0
 
         sanitized_ops = {}  # for save()
 
