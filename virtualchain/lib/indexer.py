@@ -109,7 +109,7 @@ class StateEngine( object ):
     """
     
 
-    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={} ):
+    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -158,6 +158,8 @@ class StateEngine( object ):
         self.pool = None
         self.rejected = {}
         self.expected_snapshots = expected_snapshots
+        self.backup_frequency = backup_frequency
+        self.backup_max_age = backup_max_age
 
         firsttime = True
 
@@ -277,6 +279,7 @@ class StateEngine( object ):
                                            [config.get_lastblock_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_db_filename(impl=self.impl)] ):
                
             if not os.path.exists( tmp_filename ):
+                # no new state written
                 continue  
 
             # commit our new lastblock, consensus hash set, and state engine data
@@ -302,7 +305,103 @@ class StateEngine( object ):
                return False 
            
         return True
+       
+
+    def set_backup_frequency( self, backup_frequency ):
+        self.backup_frequency = backup_frequency 
+
+
+    def set_backup_max_age( self, backup_max_age ):
+        self.backup_max_age = backup_max_age
+
+
+    def make_backups( self, block_id ):
+        """
+        If we're doing backups on a regular basis, then 
+        carry them out here if it is time to do so.
+        This method does nothing otherwise.
+        Abort on failure
+        """
+
+        # make a backup?
+        if self.backup_frequency is not None:
+            if (block_id % self.backup_frequency) == 0:
+
+                backup_dir = os.path.join( config.get_working_dir(impl=self.impl), "backups" )
+                if not os.path.exists(backup_dir):
+                    try:
+                        os.makedirs(backup_dir)
+                    except Exception, e:
+                        log.exception(e)
+                        log.error("FATAL: failed to make backup directory '%s'" % backup_dir)
+                        sys.exit(1)
+                        
+
+                for p in [config.get_db_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_lastblock_filename(impl=self.impl)]:
+                    if os.path.exists(p):
+                        try:
+                            pbase = os.path.basename(p)
+                            backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % (block_id - 1)))
+
+                            if not os.path.exists( backup_path ):
+                                shutil.copy( p, backup_path )
+                            else:
+                                log.error("Will not overwrite '%s'" % backup_path)
+
+                        except Exception, e:
+                            log.exception(e)
+                            log.error("FATAL: failed to back up '%s'" % p)
+                            sys.exit(1)
+
+        return
+
+
+
+
+    def clear_old_backups( self, block_id ):
+        """
+        If we limit the number of backups we make, then clean out old ones
+        older than block_id - backup_max_age (given in the constructor)
+
+        This method does nothing otherwise.
+        """
         
+        if self.backup_max_age is None:
+            # never delete backups
+            return 
+
+        # find old backups 
+        backup_dir = os.path.join( config.get_working_dir(impl=self.impl), "backups" )
+        if not os.path.exists(backup_dir):
+            return 
+
+        backups = os.listdir( backup_dir )
+        for backup_name in backups:
+            if backup_name in [".", ".."]:
+                continue 
+
+            backup_path = os.path.join(backup_dir, backup_name)
+            backup_block = None 
+
+            try:
+                backup_block = int(backup_path.split(".")[-1])
+            except:
+                # not a backup file
+                log.info("Skipping non-backup '%s'" % backup_path)
+
+            if not backup_path.endswith( ".bak.%s" % backup_block ):
+                # not a backup file 
+                log.info("Skipping non-backup '%s'" % backup_path)
+                continue
+        
+            if backup_block + self.backup_max_age < block_id:
+                # dead 
+                log.info("Removing old backup '%s'" % backup_path)
+                try:
+                    os.unlink(backup_path)
+                except:
+                    pass
+
     
     def save( self, block_id, consensus_hash, pending_ops, backup=False ):
         """
@@ -317,7 +416,13 @@ class StateEngine( object ):
         
         if block_id < self.lastblock:
            raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
-        
+
+        # make new backups 
+        self.make_backups( block_id )
+
+        # clear out old backups
+        self.clear_old_backups( block_id )
+
         # stage data to temporary files
         tmp_db_filename = (config.get_db_filename(impl=self.impl) + ".tmp")
         tmp_snapshot_filename = (config.get_snapshots_filename(impl=self.impl) + ".tmp")
