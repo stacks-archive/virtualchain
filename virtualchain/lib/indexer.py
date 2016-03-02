@@ -109,7 +109,7 @@ class StateEngine( object ):
     """
     
 
-    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None ):
+    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, resume_vtxindex=0 ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -160,6 +160,7 @@ class StateEngine( object ):
         self.expected_snapshots = expected_snapshots
         self.backup_frequency = backup_frequency
         self.backup_max_age = backup_max_age
+        self.resume_vtxindex = resume_vtxindex
 
         firsttime = True
 
@@ -201,12 +202,8 @@ class StateEngine( object ):
 
         # what was the last block processed?
         if os.path.exists( lastblock_filename ):
-           try:
-              with open(lastblock_filename, 'r') as f:
-                 lastblock_str = f.read()
-                 self.lastblock = int(lastblock_str)
-              
-           except Exception, e:
+           self.lastblock = self.get_lastblock()
+           if self.lastblock is None:
               log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
               log.exception(e)
               sys.exit(1)
@@ -214,6 +211,97 @@ class StateEngine( object ):
         elif not firsttime:
             log.error("FATAL: No such file or directory: %s" % lastblock_filename )
             sys.exit(1)
+
+
+    def save_num_vtxs( self, block_number, num_vtxs, impl=None ):
+        """
+        Save the number of virtual transactions present in this block.
+        Do this before processing any of them, so if we're
+        interrupted, the implementation can tell it how to
+        resume.
+        """
+
+        if impl is None:
+            impl = self.impl
+
+        num_vtxs_path = config.get_lastblock_filename(impl=impl) + ".numvtx"
+        with open(num_vtxs_path, "w") as f:
+            f.write( str(block_number) + "-" + str(num_vtxs) )
+            f.flush()
+
+
+    def get_saved_num_vtxs( self, block_number, impl=None ):
+        """
+        Get the saved number of virtual transactions in this block.
+        Return the number on success.
+        Return None if the saved .numvtx file does not correspond to the block.
+        """
+
+        if impl is None:
+            impl = self.impl
+
+        num_vtxs_path = config.get_lastblock_filename(impl=impl) + ".numvtx"
+        dat = None
+
+        if not os.path.exists( num_vtxs_path ):
+            return None 
+
+        else:
+            try:
+                with open(num_vtxs_path, "r") as f:
+                    dat = f.read().strip()
+            except:
+                log.error("Failed to load '%s'" % num_vtxs_path)
+                return None
+
+        try:
+            block_str, vtx_str = dat.split("-")
+            if int(block_str) != block_number:
+                return None 
+            else:
+                return int(vtx_str)
+
+        except:
+            # failed to parse 
+            log.error("Failed to parse '%s'" % num_vtxs_path)
+            return None
+
+    
+    def clear_num_vtxs( self, impl=None ):
+        """
+        Clear the file that stores the number of virtual transactions.
+        """
+
+        if impl is None:
+            impl = self.impl
+
+        num_vtxs_path = config.get_lastblock_filename(impl=impl) + ".numvtx"
+        try:
+            os.unlink(num_vtxs_path)
+        except:
+            pass
+
+
+    def get_lastblock( self, impl=None ):
+        """
+        What was the last block processed?
+        Return the number on success
+        Return None on failure to read
+        """
+
+        if impl is None:
+            impl = self.impl
+
+        lastblock_filename = config.get_lastblock_filename(impl=impl)
+        if os.path.exists( lastblock_filename ):
+           try:
+              with open(lastblock_filename, 'r') as f:
+                 lastblock_str = f.read()
+                 return int(lastblock_str)
+              
+           except Exception, e:
+              log.error("Failed to read last block number at '%s'" % lastblock_filename )
+              return None 
 
           
     def rollback( self ):
@@ -868,9 +956,19 @@ class StateEngine( object ):
         Exit on failure.
         """
         
-        log.debug("Process block %s (%s txs with nulldata)" % (block_id, len(ops)))
+        log.debug("Process block %s (%s virtual transactions)" % (block_id, len(ops)))
         
+        self.save_num_vtxs( block_id, len(ops) )
+
+        if self.resume_vtxindex > 0:
+            log.debug("Resuming from %s" % self.resume_vtxindex)
+            ops = ops[self.resume_vtxindex:]
+
         new_ops = self.process_ops( block_id, ops )
+
+        self.clear_num_vtxs()
+        self.resume_vtxindex = 0
+
         sanitized_ops = {}  # for save()
 
         consensus_hash = self.snapshot( block_id, new_ops['virtualchain_ordered'] )
