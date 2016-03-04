@@ -505,12 +505,6 @@ class StateEngine( object ):
         if block_id < self.lastblock:
            raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
 
-        # make new backups 
-        self.make_backups( block_id )
-
-        # clear out old backups
-        self.clear_old_backups( block_id )
-
         # stage data to temporary files
         tmp_db_filename = (config.get_db_filename(impl=self.impl) + ".tmp")
         tmp_snapshot_filename = (config.get_snapshots_filename(impl=self.impl) + ".tmp")
@@ -564,6 +558,13 @@ class StateEngine( object ):
         
         else:
             self.lastblock = block_id
+
+            # make new backups 
+            self.make_backups( block_id )
+
+            # clear out old backups
+            self.clear_old_backups( block_id )
+
             return True
     
    
