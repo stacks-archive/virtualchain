@@ -4,7 +4,7 @@
 
 A Python library for creating virtual blockchains on top of a well-known cryptocurrency
 
-## What is a Virtualchain?
+## What is a virtualchain?
 ![Virtualchains](https://blockstack.org/images/article-diagrams/virtual-blockchain.png)
 
 A *virtual blockchain* or *virtualchain* is a separate layer that sits on top of
