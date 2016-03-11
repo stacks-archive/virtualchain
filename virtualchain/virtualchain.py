@@ -35,13 +35,11 @@ import errno
 
 from ConfigParser import SafeConfigParser
 
-from txjsonrpc.netstring import jsonrpc
-
 from .lib import config, workpool, indexer
 from .lib.blockchain import session
 from pybitcoin import BitcoindClient, ChainComClient
 
-log = session.log
+log = session.get_logger()
 
 # global instance of our implementation's state engine
 state_engine = None

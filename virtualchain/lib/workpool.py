@@ -44,7 +44,7 @@ import copy
 import imp
 import platform 
 
-log = blockchain.session.log
+log = blockchain.session.get_logger()
 
 default_worker_env = {}
 
@@ -444,10 +444,13 @@ class Workpool(object):
         """
         self.running = False
         for p in self.procs:
+            log.debug("Wait on %s" % p.pid)
             p.wait()
 
         # join with coordinator
         self.coordinator_thread.join()
+        log.debug("Workpool joined")
+
 
     def get_bufs(self):
         """

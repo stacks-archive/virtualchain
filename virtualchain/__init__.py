@@ -21,8 +21,5 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-
-__version__ = '0.0.1'
-
 from .lib import *
 from virtualchain import setup_virtualchain, run_virtualchain, stop_virtualchain, sync_virtualchain, stop_sync_virtualchain, virtualchain_set_opfields, connect_bitcoind
