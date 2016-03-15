@@ -403,6 +403,72 @@ class StateEngine( object ):
         self.backup_max_age = backup_max_age
 
 
+    @classmethod 
+    def get_backup_blocks( cls, impl ):
+        """
+        Get the set of block IDs that were backed up
+        """
+        ret = []
+        backup_dir = os.path.join( config.get_working_dir(impl=impl), "backups" )
+        for name in os.listdir( backup_dir ):
+            if ".bak." not in name:
+                continue 
+
+            suffix = name.split(".bak.")[-1]
+            try:
+                block_id = int(suffix)
+            except:
+                continue 
+
+            # must exist...
+            backup_paths = cls.get_backup_paths( block_id, impl )
+            for p in backup_paths:
+                if not os.path.exists(p):
+                    # doesn't exist
+                    block_id = None
+                    continue
+
+            if block_id is not None:
+                # have backup at this block 
+                ret.append(block_id)
+
+        return ret
+
+        
+    @classmethod
+    def get_backup_paths( cls, block_id, impl ):
+        """
+        Get the set of backup paths, given the virtualchain implementation module and block number
+        """
+        backup_dir = os.path.join( config.get_working_dir(impl=impl), "backups" )
+        backup_paths = []
+        for p in [config.get_db_filename(impl=impl), config.get_snapshots_filename(impl=impl), config.get_lastblock_filename(impl=impl)]:
+            pbase = os.path.basename(p)
+            backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % block_id))
+            backup_paths.append( backup_path )
+
+        return backup_paths
+
+
+    @classmethod
+    def backup_restore( cls, block_id, impl ):
+        """
+        Restore from a backup, given the virutalchain implementation module and block number
+        """
+        backup_dir = os.path.join( config.get_working_dir(impl=impl), "backups" )
+        backup_paths = cls.get_backup_paths( block_id, impl )
+        for p in backup_paths:
+            assert os.path.exists( p ), "No such backup file: %s" % backup_paths
+
+        for p in [config.get_db_filename(impl=impl), config.get_snapshots_filename(impl=impl), config.get_lastblock_filename(impl=impl)]:
+            pbase = os.path.basename(p)
+            backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % block_id))
+            log.debug("Restoring '%s' to '%s'" % (backup_path, p))
+            shutil.copy( backup_path, p )
+    
+        return True
+
+
     def make_backups( self, block_id ):
         """
         If we're doing backups on a regular basis, then 
