@@ -1,8 +1,8 @@
-# Virtualchain
+# Blockstack State Engine
 
 [![Slack](http://slack.blockstack.org/badge.svg)](http://slack.blockstack.org/)
 
-Virtualchain is a Python library for processing and maintaining virtual blockchains.
+Blockstack State Engine is a Python library for processing blockchains and deriving virtual blockchains.
 
 ### What is a virtual blockchain?
 ![Virtual Blockchain](https://blockstack.org/images/article-diagrams/virtual-blockchain.png)
