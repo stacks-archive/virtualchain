@@ -51,7 +51,7 @@ import cPickle as pickle
 from bitcoinrpc.authproxy import JSONRPCException
 
 import session
-log = session.get_logger()
+log = session.get_logger("virtualchain")
 
 def get_bitcoind( bitcoind_or_opts ):
    """

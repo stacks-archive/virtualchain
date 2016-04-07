@@ -55,7 +55,7 @@ import blockchain.session as session
 
 from utilitybelt import is_hex
 
-log = session.get_logger()
+log = session.get_logger("virtualchain")
  
 RESERVED_KEYS = [
    'virtualchain_opcode',

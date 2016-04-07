@@ -44,7 +44,7 @@ import copy
 import imp
 import platform 
 
-log = blockchain.session.get_logger()
+log = blockchain.session.get_logger("virtualchain")
 
 default_worker_env = {}
 

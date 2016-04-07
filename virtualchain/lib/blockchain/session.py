@@ -60,18 +60,24 @@ if not hasattr( ssl, "create_default_context" ):
    do_wrap_socket = True
 
 
-def get_logger():
+def get_logger(name=None):
     """
     Get virtualchain's logger
     """
 
+    level = logging.CRITICAL
     if DEBUG:
         logging.disable(logging.NOTSET)
+        level = logging.DEBUG
 
-    log = logging.getLogger()
-    log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+    if name is None:
+        name = "<unknown>"
+        level = logging.CRITICAL
+
+    log = logging.getLogger(name=name)
+    log.setLevel( level )
     console = logging.StreamHandler()
-    console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+    console.setLevel( level )
     log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
     formatter = logging.Formatter( log_format )
     console.setFormatter(formatter)
@@ -84,7 +90,7 @@ def get_logger():
     log.addHandler(console)
     return log
 
-log = get_logger()
+log = get_logger("virtualchain")
 
 # disable debug logging from bitcoinrpc
 bitcoinrpc_logger = logging.getLogger("BitcoinRPC")
