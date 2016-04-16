@@ -191,6 +191,7 @@ def get_bitcoind_config(config_file=None, impl=None):
     bitcoind_passwd = None
     bitcoind_use_https = None
     bitcoind_timeout = None
+    bitcoind_mock = None
 
     if config_file is not None:
 
@@ -216,14 +217,24 @@ def get_bitcoind_config(config_file=None, impl=None):
             else:
                 use_https = 'no'
 
+            if parser.has_option('bitcoind', 'mock'):
+                mock = parser.get('bitcoind', 'mock')
+            else:
+                mock = 'no'
+
             if parser.has_option('bitcoind', 'timeout'):
                 bitcoind_timeout = float(parser.get('bitcoind', 'timeout'))
 
-            if use_https.lower() in ["yes", "y", "true"]:
+            if use_https.lower() in ["yes", "y", "true", "1", "on"]:
                 bitcoind_use_https = True
             else:
                 bitcoind_use_https = False
 
+            if mock.lower() in ["yes", "y", "true", "1", "on"]:
+                bitcoind_mock = True
+            else:
+                bitcoind_mock = False
+            
             loaded = True
 
     if not loaded:
@@ -233,6 +244,7 @@ def get_bitcoind_config(config_file=None, impl=None):
         bitcoind_user = 'openname'
         bitcoind_passwd = 'opennamesystem'
         bitcoind_use_https = True
+        bitcoind_mock = False
         bitcoind_timeout = 300
 
     default_bitcoin_opts = {
@@ -241,7 +253,8 @@ def get_bitcoind_config(config_file=None, impl=None):
         "bitcoind_server": bitcoind_server,
         "bitcoind_port": bitcoind_port,
         "bitcoind_use_https": bitcoind_use_https,
-        "bitcoind_timeout": bitcoind_timeout
+        "bitcoind_timeout": bitcoind_timeout,
+        "bitcoind_mock": bitcoind_mock
     }
 
     return default_bitcoin_opts
