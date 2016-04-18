@@ -41,7 +41,7 @@ setup(
         'bitcoin>=1.1.42',
         'python-bitcoinrpc>=0.1',
         'requests>=2.7.0',
-        'utilitybelt>=0.2.6'
+        'utilitybelt>=0.2.6',
         'pybitcoin>=0.9.7'
     ],
     classifiers=[
