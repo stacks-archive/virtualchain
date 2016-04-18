@@ -37,7 +37,6 @@ from ConfigParser import SafeConfigParser
 
 from .lib import config, workpool, indexer
 from .lib.blockchain import session
-from pybitcoin import BitcoindClient, ChainComClient
 
 log = session.log
 
