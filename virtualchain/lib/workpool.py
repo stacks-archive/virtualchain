@@ -438,18 +438,57 @@ class Workpool(object):
                 log.warn("Failed to send SIGKILL to %s" % p.pid)
 
 
-    def join(self):
+    def join(self, timeout=None):
         """
-        Join with the workpool processes
+        Join with the workpool processes.
+        If timeout is not None, wait at most @timeout seconds.
+        Return True if joined.
+        Return False if not.
         """
+        joined = True
         self.running = False
+        still_running = []
         for p in self.procs:
             log.debug("Wait on %s" % p.pid)
-            p.wait()
+
+            if timeout is not None:
+                # poll every 0.1 seconds 
+                deadline = timeout + time.time()
+                ret = None
+                while time.time() < deadline:
+                    time.sleep(0.1)
+                    ret = p.poll()
+                    if ret is not None:
+                        break
+
+                if ret is None:
+                    # did not join 
+                    joined = False
+                    still_running.append(p)
+
+            else:
+                # wait indefinitely
+                p.wait()
 
         # join with coordinator
-        self.coordinator_thread.join()
-        log.debug("Workpool joined")
+        if joined:
+            self.coordinator_thread.join(timeout)
+            if self.coordinator_thread.is_alive():
+                # not joined 
+                joined = False
+                log.debug("Workpool not joined (coordinator still alive)")
+
+            else:
+                log.debug("Workpool joined")
+        else:
+            log.debug("Workpool not joined (still alive: %s)" % (",".join([str(p.pid) for p in still_running])))
+
+        # reap dead processes 
+        for p in self.procs:
+            if p not in still_running:
+                self.reap_process(p)
+        
+        return joined
 
 
     def get_bufs(self):
@@ -571,6 +610,7 @@ class Workpool(object):
 
         if proc in self.procs:
             self.procs.remove(proc)
+
 
     @classmethod
     def build_message(cls, key, payload):
