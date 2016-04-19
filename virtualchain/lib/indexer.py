@@ -157,7 +157,7 @@ class StateEngine( object ):
         self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
         self.rejected = {}
-        self.expected_snapshots = expected_snapshots['snapshots']
+        self.expected_snapshots = expected_snapshots.get('snapshots', {})
         self.backup_frequency = backup_frequency
         self.backup_max_age = backup_max_age
         self.resume_offset = resume_offset
@@ -1085,11 +1085,20 @@ class StateEngine( object ):
         NOT THREAD SAFE
         """
         if self.pool is None:
-            return 
+            return True 
 
         self.pool.close()
         self.pool.terminate()
-        self.pool.join()
+        rc = self.pool.join(timeout=5.0)
+        if not rc:
+            # some stragglers 
+            log.debug("Killing workpool stragglers")
+            self.pool.kill()
+            rc = self.pool.join(timeout=5.0)
+            if not rc:
+                log.error("FATAL: failed to join workpool")
+                sys.exit(1)
+
         self.pool = None
         return True
 
