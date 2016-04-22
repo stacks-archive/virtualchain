@@ -203,6 +203,7 @@ class StateEngine( object ):
         # what was the last block processed?
         if os.path.exists( lastblock_filename ):
            self.lastblock = self.get_lastblock()
+           log.debug("Lastblock: %s (%s)" % (self.lastblock, lastblock_filename))
            if self.lastblock is None:
               log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
               log.exception(e)
@@ -914,14 +915,14 @@ class StateEngine( object ):
         return self.remove_reserved_keys( op )[0]
 
 
-    def log_accept( block_id, vtxindex, opcode, op ):
+    def log_accept( self, block_id, vtxindex, opcode, op ):
         """
         Log an accepted operation
         """
         log.debug("ACCEPT op %s at (%s, %s) (%s)" % (opcode, block_id, vtxindex, json.dumps(op, sort_keys=True)))
 
 
-    def log_reject( block_id, vtxindex, opcode, op ):
+    def log_reject( self, block_id, vtxindex, opcode, op ):
         """
         Log a rejected operation
         """
@@ -959,7 +960,11 @@ class StateEngine( object ):
             op_sanitized, _ = self.remove_reserved_keys( op_data )
             initial_scan.append( copy.deepcopy( op_sanitized ) )
 
-        self.impl.db_scan_block( block_id, initial_scan, db_state=self.state )
+        # for backwards-compatibility 
+        if hasattr(self.impl, "db_scan_block"):
+            self.impl.db_scan_block( block_id, initial_scan, db_state=self.state )
+        else:
+            log.debug("Compat: no db_scan_block")
 
         # check each operation 
         for i in xrange(0, len(ops)):
@@ -968,7 +973,7 @@ class StateEngine( object ):
             opcode = reserved['virtualchain_opcode']
 
             # check this op
-            rc = self.impl.db_check( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], to_commit_sanitized, db_state=self.state )
+            rc = self.impl.db_check( block_id, new_ops, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], to_commit_sanitized, db_state=self.state )
             if rc:
 
                 # commit this op
