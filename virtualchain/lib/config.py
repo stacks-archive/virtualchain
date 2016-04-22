@@ -84,6 +84,9 @@ def get_working_dir(impl=None):
     Get the absolute path to the working directory.
     """
 
+    if os.environ.has_key("VIRTUALCHAIN_WORKING_DIR"):
+        return os.environ["VIRTUALCHAIN_WORKING_DIR"]
+
     impl = get_impl(impl)
 
     from os.path import expanduser
@@ -192,6 +195,7 @@ def get_bitcoind_config(config_file=None, impl=None):
     bitcoind_use_https = None
     bitcoind_timeout = None
     bitcoind_mock = None
+    bitcoind_mock_save_file = None
 
     if config_file is not None:
 
@@ -216,6 +220,9 @@ def get_bitcoind_config(config_file=None, impl=None):
                 use_https = parser.get('bitcoind', 'use_https')
             else:
                 use_https = 'no'
+
+            if parser.has_option("bitcoind", "save_file"):
+                bitcoind_mock_save_file = parser.get("bitcoind", "save_file")
 
             if parser.has_option('bitcoind', 'mock'):
                 mock = parser.get('bitcoind', 'mock')
@@ -246,6 +253,7 @@ def get_bitcoind_config(config_file=None, impl=None):
         bitcoind_use_https = True
         bitcoind_mock = False
         bitcoind_timeout = 300
+        bitcoind_mock_save_file = None
 
     default_bitcoin_opts = {
         "bitcoind_user": bitcoind_user,
@@ -254,7 +262,8 @@ def get_bitcoind_config(config_file=None, impl=None):
         "bitcoind_port": bitcoind_port,
         "bitcoind_use_https": bitcoind_use_https,
         "bitcoind_timeout": bitcoind_timeout,
-        "bitcoind_mock": bitcoind_mock
+        "bitcoind_mock": bitcoind_mock,
+        "bitcoind_mock_save_file": bitcoind_mock_save_file
     }
 
     return default_bitcoin_opts
