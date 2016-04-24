@@ -383,6 +383,7 @@ class StateEngine( object ):
                      pass
 
                if not backup:
+                   log.debug("Rename %s --> %s" % (tmp_filename, filename))
                    os.rename( tmp_filename, filename )
                else:
                    shutil.copy( tmp_filename, filename )
