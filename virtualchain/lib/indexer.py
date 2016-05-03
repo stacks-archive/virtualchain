@@ -380,12 +380,13 @@ class StateEngine( object ):
                   try:
                      os.unlink( filename )
                   except:
-                     pass
+                     continue
 
                if not backup:
                    log.debug("Rename %s --> %s" % (tmp_filename, filename))
                    os.rename( tmp_filename, filename )
                else:
+                   log.debug("Rename and back up %s --> %s" % (tmp_filename, filename))
                    shutil.copy( tmp_filename, filename )
                    os.rename( tmp_filename, tmp_filename + (".%s" % backup_time))
                   
