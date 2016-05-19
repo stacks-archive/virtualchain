@@ -246,11 +246,11 @@ def get_bitcoind_config(config_file=None, impl=None):
 
     if not loaded:
 
-        bitcoind_server = 'btcd.onename.com'
+        bitcoind_server = 'bitcoin.blockstack.com'
         bitcoind_port = '8332'
-        bitcoind_user = 'openname'
-        bitcoind_passwd = 'opennamesystem'
-        bitcoind_use_https = True
+        bitcoind_user = 'blockstack'
+        bitcoind_passwd = 'blockstacksystem'
+        bitcoind_use_https = False
         bitcoind_mock = False
         bitcoind_timeout = 300
         bitcoind_mock_save_file = None
@@ -315,6 +315,10 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
     if args.bitcoind_use_https:
         config.BITCOIND_USE_HTTPS = True
         opts['bitcoind_use_https'] = True
+
+    else:
+        config.BITCOIND_USE_HTTPS = False
+        opts['bitcoind_use_https'] = False
 
     if return_parser:
         return opts, parser
