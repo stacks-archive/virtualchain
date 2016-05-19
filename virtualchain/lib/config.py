@@ -313,11 +313,9 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
             setattr(config, config_name, getattr(args, argname))
 
     if args.bitcoind_use_https:
-        config.BITCOIND_USE_HTTPS = True
         opts['bitcoind_use_https'] = True
 
     else:
-        config.BITCOIND_USE_HTTPS = False
         opts['bitcoind_use_https'] = False
 
     if return_parser:
