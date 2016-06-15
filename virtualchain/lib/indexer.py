@@ -364,8 +364,9 @@ class StateEngine( object ):
         
         backup_time = int(time.time() * 1000000)
 
-        for tmp_filename, filename in zip( [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
-                                           [config.get_lastblock_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_db_filename(impl=self.impl)] ):
+        for file_type, tmp_filename, filename in zip( ["lastblock", "snapshots", "db"], \
+                                                      [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
+                                                      [config.get_lastblock_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_db_filename(impl=self.impl)] ):
                
             if not os.path.exists( tmp_filename ):
                 # no new state written
@@ -376,23 +377,20 @@ class StateEngine( object ):
                
                # NOTE: rename fails on Windows if the destination exists 
                if sys.platform == 'win32' and os.path.exists( filename ):
-                  
-                  try:
-                     os.unlink( filename )
-                  except:
-                     continue
+                   log.debug("Clear old '%s' %s" % (file_type, filename))
+                   os.unlink( filename )
 
                if not backup:
-                   log.debug("Rename %s --> %s" % (tmp_filename, filename))
+                   log.debug("Rename '%s': %s --> %s" % (file_type, tmp_filename, filename))
                    os.rename( tmp_filename, filename )
                else:
-                   log.debug("Rename and back up %s --> %s" % (tmp_filename, filename))
-                   shutil.copy( tmp_filename, filename )
-                   os.rename( tmp_filename, tmp_filename + (".%s" % backup_time))
+                   log.debug("Rename and back up '%s': %s --> %s" % (file_type, tmp_filename, filename))
+                   shutil.copy( tmp_filename, tmp_filename + (".%s" % backup_time))
+                   os.rename( tmp_filename, filename )
                   
             except Exception, e:
-               
                log.exception(e)
+               log.error("Failed to rename '%s' to '%s'" % (tmp_filename, filename))
                return False 
            
         return True
