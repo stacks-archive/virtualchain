@@ -480,6 +480,7 @@ def tx_is_coinbase( tx ):
 
     return False
 
+
 def tx_to_hex( tx ):
      """
      Convert a bitcoin-given transaction into its hex string.
@@ -508,7 +509,7 @@ def tx_to_hex( tx ):
      
      for out in tx['vout']:
          next_out = {
-            'value': int(round(Decimal(out['value']) * Decimal(10**8))),
+            'value': int(Decimal(out['value']) * Decimal(10**8)),
             'script': str(out['scriptPubKey']['hex'])
          }
          tx_outs.append(next_out)
@@ -531,6 +532,9 @@ def tx_verify( tx, tx_hash ):
     tx_serialized = tx_to_hex( tx )
     tx_reversed_bin_hash = pybitcoin.bin_double_sha256( binascii.unhexlify(tx_serialized) )
     tx_candidate_hash = binascii.hexlify(tx_reversed_bin_hash[::-1])
+
+    if tx_hash != tx_candidate_hash:
+        print tx_serialized
 
     return tx_hash == tx_candidate_hash
 
@@ -735,7 +739,6 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
          tx = future_get_result( tx_fut, 1000000000000000L )
          
-         #if len(tx['vin']) > 0 and 'coinbase' not in tx['vin'][0].keys():
          if not tx_is_coinbase( tx ):
 
              # verify non-coinbase transaction 
