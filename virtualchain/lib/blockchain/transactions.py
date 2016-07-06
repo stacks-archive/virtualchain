@@ -787,6 +787,11 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
             
             # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
             input_tx = future_get_result( input_tx_fut, 1000000000000000L )
+            if not input_tx.has_key('txid'):
+                # something's wrong 
+                log.error("Invalid transaction\n%s" % json.dumps(input_tx, indent=4, sort_keys=True))
+                raise ValueError("Invalid transaction")
+
             input_tx_hash = input_tx['txid']
 
             # verify (but skip coinbase) 
