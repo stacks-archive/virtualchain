@@ -59,18 +59,42 @@ if not hasattr( ssl, "create_default_context" ):
    create_ssl_authproxy = False
    do_wrap_socket = True
 
-if not globals().has_key('log'):
-    log = logging.getLogger()
-    if len(log.handlers) == 0:
-        log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-        console = logging.StreamHandler()
-        console.setLevel(logging.DEBUG if DEBUG else logging.INFO)
-        log_format = ('[%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
-        formatter = logging.Formatter( log_format )
-        console.setFormatter(formatter)
-        log.propagate = False
-        log.addHandler(console)
 
+def get_logger(name=None):
+    """
+    Get virtualchain's logger
+    """
+
+    level = logging.CRITICAL
+    if DEBUG:
+        logging.disable(logging.NOTSET)
+        level = logging.DEBUG
+
+    if name is None:
+        name = "<unknown>"
+        level = logging.CRITICAL
+
+    log = logging.getLogger(name=name)
+    log.setLevel( level )
+    console = logging.StreamHandler()
+    console.setLevel( level )
+    log_format = ('[%(asctime)s] [%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
+    formatter = logging.Formatter( log_format )
+    console.setFormatter(formatter)
+    log.propagate = False
+
+    if len(log.handlers) > 0:
+        for i in xrange(0, len(log.handlers)):
+            log.handlers.pop(0)
+    
+    log.addHandler(console)
+    return log
+
+log = get_logger("virtualchain")
+
+# disable debug logging from bitcoinrpc
+bitcoinrpc_logger = logging.getLogger("BitcoinRPC")
+bitcoinrpc_logger.setLevel(logging.CRITICAL)
 
 class BitcoindConnection( httplib.HTTPSConnection ):
    """

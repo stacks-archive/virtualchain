@@ -53,30 +53,51 @@ AVERAGE_BLOCKS_PER_HOUR = MINUTES_PER_HOUR/AVERAGE_MINUTES_PER_BLOCK
 BLOCKS_CONSENSUS_HASH_IS_VALID = 4*AVERAGE_BLOCKS_PER_HOUR
 
 
-def get_first_block_id():
+def get_impl(impl):
+    """
+    Get the implementation--either
+    the given one (if not None), or
+    the globally-set one (if not None).
+    Raise exception if both are None.
+    """
+    global IMPL
+    if impl is not None:
+        return impl
+
+    elif IMPL is not None:
+        return IMPL
+
+    else:
+        raise Exception("No virtualchain implementation set")
+
+
+def get_first_block_id(impl=None):
     """
     facade to implementation's first block
     """
-    global IMPL
+    impl = get_impl(impl)
+    return impl.get_first_block_id()
 
-    return IMPL.get_first_block_id()
 
-
-def get_working_dir():
+def get_working_dir(impl=None):
     """
     Get the absolute path to the working directory.
     """
-    global IMPL
+
+    if os.environ.has_key("VIRTUALCHAIN_WORKING_DIR"):
+        return os.environ["VIRTUALCHAIN_WORKING_DIR"]
+
+    impl = get_impl(impl)
 
     from os.path import expanduser
     home = expanduser("~")
 
     working_dir = None
-    if hasattr(IMPL, "working_dir") and IMPL.working_dir is not None:
-        working_dir = IMPL.working_dir
+    if hasattr(impl, "working_dir") and impl.working_dir is not None:
+        working_dir = impl.working_dir
 
     else:
-        working_dir = os.path.join(home, "." + IMPL.get_virtual_chain_name(testset=TESTSET))
+        working_dir = os.path.join(home, "." + impl.get_virtual_chain_name(testset=TESTSET))
 
     if not os.path.exists(working_dir):
         os.makedirs(working_dir)
@@ -84,55 +105,55 @@ def get_working_dir():
     return working_dir
 
 
-def get_config_filename():
+def get_config_filename(impl=None):
     """
     Get the absolute path to the config file.
     """
-    global IMPL
+    impl = get_impl(impl)
 
-    working_dir = get_working_dir()
-    config_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".ini"
+    working_dir = get_working_dir(impl=impl)
+    config_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".ini"
 
     return os.path.join(working_dir, config_filename)
 
 
-def get_db_filename():
+def get_db_filename(impl=None):
     """
     Get the absolute path to the last-block file.
     """
-    global IMPL
+    impl = get_impl(impl)
 
-    working_dir = get_working_dir()
-    lastblock_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".db"
+    working_dir = get_working_dir(impl=impl)
+    lastblock_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".db"
 
     return os.path.join(working_dir, lastblock_filename)
 
 
-def get_lastblock_filename():
+def get_lastblock_filename(impl=None):
     """
     Get the absolute path to the last-block file.
     """
-    global IMPL
+    impl = get_impl(impl)
 
-    working_dir = get_working_dir()
-    lastblock_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".lastblock"
+    working_dir = get_working_dir(impl=impl)
+    lastblock_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".lastblock"
 
     return os.path.join(working_dir, lastblock_filename)
 
 
-def get_snapshots_filename():
+def get_snapshots_filename(impl=None):
     """
     Get the absolute path to the chain's consensus snapshots file.
     """
-    global IMPL
+    impl = get_impl(impl)
 
-    working_dir = get_working_dir()
-    snapshots_filename = IMPL.get_virtual_chain_name(testset=TESTSET) + ".snapshots"
+    working_dir = get_working_dir(impl=impl)
+    snapshots_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".snapshots"
 
     return os.path.join(working_dir, snapshots_filename)
 
 
-def configure_multiprocessing(bitcoind_opts):
+def configure_multiprocessing(bitcoind_opts, impl=None):
     """
     Given the set of bitcoind options (i.e. the location of the bitcoind server),
     come up with some good multiprocessing parameters.
@@ -159,7 +180,7 @@ def configure_multiprocessing(bitcoind_opts):
         return (10, 1)
 
 
-def get_bitcoind_config(config_file=None):
+def get_bitcoind_config(config_file=None, impl=None):
     """
     Set bitcoind options globally.
     Call this before trying to talk to bitcoind.
@@ -173,6 +194,8 @@ def get_bitcoind_config(config_file=None):
     bitcoind_passwd = None
     bitcoind_use_https = None
     bitcoind_timeout = None
+    bitcoind_mock = None
+    bitcoind_mock_save_file = None
 
     if config_file is not None:
 
@@ -198,24 +221,39 @@ def get_bitcoind_config(config_file=None):
             else:
                 use_https = 'no'
 
+            if parser.has_option("bitcoind", "save_file"):
+                bitcoind_mock_save_file = parser.get("bitcoind", "save_file")
+
+            if parser.has_option('bitcoind', 'mock'):
+                mock = parser.get('bitcoind', 'mock')
+            else:
+                mock = 'no'
+
             if parser.has_option('bitcoind', 'timeout'):
                 bitcoind_timeout = float(parser.get('bitcoind', 'timeout'))
 
-            if use_https.lower() in ["yes", "y", "true"]:
+            if use_https.lower() in ["yes", "y", "true", "1", "on"]:
                 bitcoind_use_https = True
             else:
                 bitcoind_use_https = False
 
+            if mock.lower() in ["yes", "y", "true", "1", "on"]:
+                bitcoind_mock = True
+            else:
+                bitcoind_mock = False
+            
             loaded = True
 
     if not loaded:
 
-        bitcoind_server = 'btcd.onename.com'
+        bitcoind_server = 'bitcoin.blockstack.com'
         bitcoind_port = '8332'
-        bitcoind_user = 'openname'
-        bitcoind_passwd = 'opennamesystem'
-        bitcoind_use_https = True
+        bitcoind_user = 'blockstack'
+        bitcoind_passwd = 'blockstacksystem'
+        bitcoind_use_https = False
+        bitcoind_mock = False
         bitcoind_timeout = 300
+        bitcoind_mock_save_file = None
 
     default_bitcoin_opts = {
         "bitcoind_user": bitcoind_user,
@@ -223,24 +261,26 @@ def get_bitcoind_config(config_file=None):
         "bitcoind_server": bitcoind_server,
         "bitcoind_port": bitcoind_port,
         "bitcoind_use_https": bitcoind_use_https,
-        "bitcoind_timeout": bitcoind_timeout
+        "bitcoind_timeout": bitcoind_timeout,
+        "bitcoind_mock": bitcoind_mock,
+        "bitcoind_mock_save_file": bitcoind_mock_save_file
     }
 
     return default_bitcoin_opts
 
 
-def parse_bitcoind_args(return_parser=False, parser=None):
+def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
     """
      Get bitcoind command-line arguments.
      Optionally return the parser used to do so as well.
     """
 
-    global IMPL
+    impl = get_impl(impl)
 
     opts = {}
 
     if parser is None:
-        parser = argparse.ArgumentParser(description='%s version %s' % (IMPL.get_virtual_chain_name(testset=TESTSET), IMPL.get_virtual_chain_version()))
+        parser = argparse.ArgumentParser(description='%s version %s' % (impl.get_virtual_chain_name(testset=TESTSET), impl.get_virtual_chain_version()))
 
     parser.add_argument(
           '--bitcoind-server',
@@ -273,8 +313,10 @@ def parse_bitcoind_args(return_parser=False, parser=None):
             setattr(config, config_name, getattr(args, argname))
 
     if args.bitcoind_use_https:
-        config.BITCOIND_USE_HTTPS = True
         opts['bitcoind_use_https'] = True
+
+    else:
+        opts['bitcoind_use_https'] = False
 
     if return_parser:
         return opts, parser
@@ -284,7 +326,7 @@ def parse_bitcoind_args(return_parser=False, parser=None):
 
 def get_implementation():
     """
-    Get the implementation of the virtual chain state.
+    Get the globally-set implementation of the virtual chain state.
     """
     global IMPL
     return IMPL
@@ -296,8 +338,8 @@ def set_implementation(impl, testset):
     that implements the virtual chain's core logic.
     This method must be called before anything else.
     """
-    global IMPL
     global TESTSET
+    global IMPL
 
     IMPL = impl
     TESTSET = testset

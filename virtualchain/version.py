@@ -21,13 +21,4 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-
-import config 
-import blockchain 
-import indexer 
-import workpool 
-
-from config import *
-from blockchain import *
-from indexer import StateEngine, get_index_range, RESERVED_KEYS
-from workpool import multiprocess_bitcoind, multiprocess_batch_size, multiprocess_pool
+__version__ = '0.0.13.1'

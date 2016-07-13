@@ -50,8 +50,8 @@ import cPickle as pickle
 
 from bitcoinrpc.authproxy import JSONRPCException
 
-import session 
-log = session.log 
+import session
+log = session.get_logger("virtualchain")
 
 def get_bitcoind( bitcoind_or_opts ):
    """
@@ -373,7 +373,7 @@ def process_nulldata_tx_async( workpool, bitcoind_opts, tx ):
     we want to acquire each input's nulldata, and for that, we 
     need the raw transaction data for the input.
     
-    However, in order to identify a primary sender, we need to 
+    However, in order to preserve the (sender, tx) relation, we need to 
     preserve the order in which the input transactions occurred.
     To do so, we tag each future with the index into the transaction's 
     vin list, so once the futures have been finalized, we'll have an 
@@ -480,6 +480,7 @@ def tx_is_coinbase( tx ):
 
     return False
 
+
 def tx_to_hex( tx ):
      """
      Convert a bitcoin-given transaction into its hex string.
@@ -508,7 +509,7 @@ def tx_to_hex( tx ):
      
      for out in tx['vout']:
          next_out = {
-            'value': int(round(Decimal(out['value']) * Decimal(10**8))),
+            'value': int(Decimal(out['value']) * Decimal(10**8)),
             'script': str(out['scriptPubKey']['hex'])
          }
          tx_outs.append(next_out)
@@ -531,6 +532,9 @@ def tx_verify( tx, tx_hash ):
     tx_serialized = tx_to_hex( tx )
     tx_reversed_bin_hash = pybitcoin.bin_double_sha256( binascii.unhexlify(tx_serialized) )
     tx_candidate_hash = binascii.hexlify(tx_reversed_bin_hash[::-1])
+
+    if tx_hash != tx_candidate_hash:
+        print tx_serialized
 
     return tx_hash == tx_candidate_hash
 
@@ -588,7 +592,7 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
    * vout (list of outputs from bitcoind)
    * txid (transaction ID, as a hex string)
    * txindex (transaction index in the block)
-   * senders (a list of {"script_pubkey":, "amount":, and "addresses":} dicts; the "script_pubkey" field is the hex-encoded op script).
+   * senders (a list of {"script_pubkey":, "amount":, "addresses":} dicts in order by input; the "script_pubkey" field is the hex-encoded op script).
    * fee (total amount sent)
    * nulldata (input data to the transaction's script; encodes virtual chain operations)
    
@@ -735,7 +739,6 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
          tx = future_get_result( tx_fut, 1000000000000000L )
          
-         #if len(tx['vin']) > 0 and 'coinbase' not in tx['vin'][0].keys():
          if not tx_is_coinbase( tx ):
 
              # verify non-coinbase transaction 
@@ -765,12 +768,17 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          
          if ('vin' not in tx) or ('vout' not in tx) or ('txid' not in tx):
             continue 
-         
+        
+         inputs = tx['vin']
          outputs = tx['vout']
          
          total_in = 0   # total input paid
          senders = []
          ordered_senders = []
+
+         if tx_is_coinbase( tx ):
+             # skip coinbase 
+             continue
          
          # gather this tx's nulldata-bearing transactions
          for i in xrange(0, len(nulldata_tx_futs_and_output_idxs)):
@@ -779,6 +787,11 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
             
             # NOTE: interruptable blocking get(), but should not block since future_next found one that's ready
             input_tx = future_get_result( input_tx_fut, 1000000000000000L )
+            if not input_tx.has_key('txid'):
+                # something's wrong 
+                log.error("Invalid transaction\n%s" % json.dumps(input_tx, indent=4, sort_keys=True))
+                raise ValueError("Invalid transaction")
+
             input_tx_hash = input_tx['txid']
 
             # verify (but skip coinbase) 
@@ -804,6 +817,10 @@ def get_nulldata_txs_in_blocks( workpool, bitcoind_opts, blocks_ids, first_block
          # sort on input_idx, so the list of senders matches the given transaction's list of inputs
          ordered_senders.sort()
          senders = [sender for (_, sender) in ordered_senders]
+
+         # sanity check...
+         if len(senders) != len(inputs):
+             raise Exception("Sender/inputs mismatch: %s != %s\n" % (len(senders), len(inputs)))
          
          total_out = get_total_out( outputs )
          nulldata = get_nulldata( tx )

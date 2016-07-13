@@ -96,13 +96,23 @@ def db_parse( block_id, opcode, op_payload, senders, inputs, outputs, fee, db_st
    return None
 
 
-def db_check( block_id, checked_ops, opcode, op, txid, vtxindex, db_state=None ):
+def db_scan_block( block_id, op_list, db_state=None ):
+   """
+   Given the block ID and a tx-ordered list of operations, do any
+   block-level initial preprocessing.  This method does not 
+   affect the operations (the op_list will be discarded), nor 
+   does it return anything.  It is only meant to give the state
+   engine implementation information on what is to come in the
+   sequence of db_check() calls.
+   """
+   print "\nreference implementation of db_check_block\n"
+   return 
+
+
+def db_check( block_id, opcode, op, txid, vtxindex, checked, db_state=None ):
    """
    Given the block ID and a parsed operation, check to see if this is a *valid* operation
    for the purposes of this virtual chain's database.
-   
-   checked_ops is a dict that maps opcodes to operations already checked by
-   this method for this block.
    
    Return True if so; False if not.
    """

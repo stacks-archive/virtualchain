@@ -23,9 +23,12 @@
 
 from setuptools import setup, find_packages
 
+# to set __version__
+exec(open('virtualchain/version.py').read())
+
 setup(
     name='virtualchain',
-    version='0.0.8',
+    version=__version__,
     url='https://github.com/blockstack/virtualchain',
     license='GPLv3',
     author='Blockstack.org',
@@ -37,9 +40,10 @@ setup(
     zip_safe=False,
     include_package_data=True,
     install_requires=[
-        'pybitcoin>=0.9.7',
-        'Twisted>=15.3.0',
-        'txJSON-RPC>=0.3.1'
+        'pybitcoin>=0.9.8',
+        'bitcoin>=1.1.42',
+        'python-bitcoinrpc==0.1',
+        'utilitybelt>=0.2.6'
     ],
     classifiers=[
         'Intended Audience :: Developers',

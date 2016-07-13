@@ -35,13 +35,11 @@ import errno
 
 from ConfigParser import SafeConfigParser
 
-from txjsonrpc.netstring import jsonrpc
-
 from .lib import config, workpool, indexer
 from .lib.blockchain import session
 from pybitcoin import BitcoindClient, ChainComClient
 
-log = session.log
+log = session.get_logger("virtualchain")
 
 # global instance of our implementation's state engine
 state_engine = None
@@ -152,7 +150,7 @@ def run_virtualchain( state_engine ):
         _, last_block_id = indexer.get_index_range(bitcoind)
 
 
-def setup_virtualchain(impl_module, testset=False, bitcoind_connection_factory=None, index_worker_env=None):
+def setup_virtualchain(impl=None, testset=False, bitcoind_connection_factory=None, index_worker_env=None):
     """
     Set up the virtual blockchain.
     Use the given virtual blockchain core logic.
@@ -160,8 +158,8 @@ def setup_virtualchain(impl_module, testset=False, bitcoind_connection_factory=N
 
     global connect_bitcoind
 
-    if impl_module is not None:
-        config.set_implementation(impl_module, testset)
+    if impl is not None:
+        config.set_implementation(impl, testset)
 
     if bitcoind_connection_factory is not None:
         workpool.set_connect_bitcoind( bitcoind_connection_factory )

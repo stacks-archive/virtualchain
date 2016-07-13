@@ -42,8 +42,9 @@ import cPickle as pickle
 import blockchain.session
 import copy
 import imp
+import platform 
 
-log = blockchain.session.log
+log = blockchain.session.get_logger("virtualchain")
 
 default_worker_env = {}
 
@@ -374,7 +375,8 @@ class Workpool(object):
             tmp.update(worker_env)
             worker_env = tmp
 
-        if 'PYTHONPATH' in worker_env:
+        if 'PYTHONPATH' in worker_env and platform.system().lower() == 'darwin':
+            # Mac OS X-specific work-around
             self.worker_bin_path = worker_env['PYTHONPATH'] + "/python"
 
         # start processes
@@ -419,25 +421,75 @@ class Workpool(object):
         Stop the workpool with SIGTERM
         """
         for p in self.procs:
-            p.send_signal(signal.SIGTERM)
+            try:
+                p.send_signal( signal.SIGTERM )
+            except:
+                log.warn("Failed to send SIGTERM to %s" % p.pid)
+
 
     def kill(self):
         """
         Stop the workpool with SIGKILL
         """
         for p in self.procs:
-            p.send_signal(signal.SIGKILL)
+            try:
+                p.send_signal( signal.SIGKILL )
+            except:
+                log.warn("Failed to send SIGKILL to %s" % p.pid)
 
-    def join(self):
+
+    def join(self, timeout=None):
         """
-        Join with the workpool processes
+        Join with the workpool processes.
+        If timeout is not None, wait at most @timeout seconds.
+        Return True if joined.
+        Return False if not.
         """
+        joined = True
         self.running = False
+        still_running = []
         for p in self.procs:
-            p.wait()
+            log.debug("Wait on %s" % p.pid)
+
+            if timeout is not None:
+                # poll every 0.1 seconds 
+                deadline = timeout + time.time()
+                ret = None
+                while time.time() < deadline:
+                    time.sleep(0.1)
+                    ret = p.poll()
+                    if ret is not None:
+                        break
+
+                if ret is None:
+                    # did not join 
+                    joined = False
+                    still_running.append(p)
+
+            else:
+                # wait indefinitely
+                p.wait()
 
         # join with coordinator
-        self.coordinator_thread.join()
+        if joined:
+            self.coordinator_thread.join(timeout)
+            if self.coordinator_thread.is_alive():
+                # not joined 
+                joined = False
+                log.debug("Workpool not joined (coordinator still alive)")
+
+            else:
+                log.debug("Workpool joined")
+        else:
+            log.debug("Workpool not joined (still alive: %s)" % (",".join([str(p.pid) for p in still_running])))
+
+        # reap dead processes 
+        for p in self.procs:
+            if p not in still_running:
+                self.reap_process(p)
+        
+        return joined
+
 
     def get_bufs(self):
         """
@@ -558,6 +610,7 @@ class Workpool(object):
 
         if proc in self.procs:
             self.procs.remove(proc)
+
 
     @classmethod
     def build_message(cls, key, payload):
