@@ -3,8 +3,8 @@
 """
     Virtualchain
     ~~~~~
-    copyright: (c) 2014 by Halfmoon Labs, Inc.
-    copyright: (c) 2015 by Blockstack.org
+    copyright: (c) 2014-2015 by Halfmoon Labs, Inc.
+    copyright: (c) 2016 by Blockstack.org
     
     This file is part of Virtualchain
     
@@ -21,14 +21,5 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-
-import config 
-import blockchain 
-import indexer 
-import workpool 
-
-from config import *
-from blockchain import *
-from blockchain.bitcoin_blockchain import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte
-from indexer import StateEngine, get_index_range, RESERVED_KEYS
-from workpool import multiprocess_bitcoind, multiprocess_batch_size, multiprocess_pool
+from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key
+from authproxy import *
