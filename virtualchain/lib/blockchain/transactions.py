@@ -34,6 +34,8 @@ except:
    from virtualchain.lib.config import MULTIPROCESS_RPC_RETRY
    from virtualchain.lib.workpool import multiprocess_bitcoind, multiprocess_batch_size, multiprocess_rpc_marshal, multiprocess_bitcoind_opts, Workpool
 
+from .bitcoin_blockchain import JSONRPCException
+
 import logging
 import os
 import time
@@ -47,8 +49,6 @@ import pybitcoin
 import pprint
 from decimal import *
 import cPickle as pickle
-
-from bitcoinrpc.authproxy import JSONRPCException
 
 import session
 log = session.get_logger("virtualchain")
@@ -488,41 +488,54 @@ def tx_to_hex( tx ):
      """
      tx_ins = []
      tx_outs = []
-     for inp in tx['vin']:
-         next_inp = {
-            "outpoint": {
-               "index": int(inp['vout']),
-               "hash": str(inp['txid'])
-            }
+
+     try:
+         for inp in tx['vin']:
+             next_inp = {
+                "outpoint": {
+                   "index": int(inp['vout']),
+                   "hash": str(inp['txid'])
+                }
+             }
+             if 'sequence' in inp:
+                 next_inp['sequence'] = int(inp['sequence'])
+             else:
+                 next_inp['sequence'] = pybitcoin.UINT_MAX
+
+             if 'scriptSig' in inp:
+                 next_inp['script'] = str(inp['scriptSig']['hex'])
+             else:
+                 next_inp['script'] = ""
+
+             tx_ins.append(next_inp)
+         
+         for out in tx['vout']:
+             next_out = {
+                'value': int(Decimal(out['value']) * Decimal(10**8)),
+                'script': str(out['scriptPubKey']['hex'])
+             }
+             tx_outs.append(next_out)
+
+         tx_fields = {
+            "locktime": int(tx['locktime']),
+            "version": int(tx['version']),
+            "ins": tx_ins,
+            "outs": tx_outs
          }
-         if 'sequence' in inp:
-             next_inp['sequence'] = int(inp['sequence'])
-         else:
-             next_inp['sequence'] = pybitcoin.UINT_MAX
 
-         if 'scriptSig' in inp:
-             next_inp['script'] = str(inp['scriptSig']['hex'])
-         else:
-             next_inp['script'] = ""
+         tx_serialized = bitcoin.serialize( tx_fields )
+         return str(tx_serialized)
 
-         tx_ins.append(next_inp)
-     
-     for out in tx['vout']:
-         next_out = {
-            'value': int(Decimal(out['value']) * Decimal(10**8)),
-            'script': str(out['scriptPubKey']['hex'])
-         }
-         tx_outs.append(next_out)
+     except KeyError, ke:
+         if tx_is_coinbase(tx) and 'hex' in tx.keys():
+             tx_serialized = tx['hex']
+             return str(tx_serialized)
 
-     tx_fields = {
-        "locktime": int(tx['locktime']),
-        "version": int(tx['version']),
-        "ins": tx_ins,
-        "outs": tx_outs
-     }
+         import simplejson
+         log.error("Key error in :\n%s" % simplejson.dumps(tx, indent=4, sort_keys=True))
+         traceback.print_exc()
+         raise ke
 
-     tx_serialized = bitcoin.serialize( tx_fields )
-     return str(tx_serialized)
 
 
 def tx_verify( tx, tx_hash ):
