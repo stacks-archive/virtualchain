@@ -42,7 +42,6 @@ setup(
     install_requires=[
         'pybitcoin>=0.9.8',
         'bitcoin>=1.1.42',
-        'python-bitcoinrpc==0.1',
         'utilitybelt>=0.2.6'
     ],
     classifiers=[
