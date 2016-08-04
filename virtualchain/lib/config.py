@@ -194,8 +194,10 @@ def get_bitcoind_config(config_file=None, impl=None):
     bitcoind_passwd = None
     bitcoind_use_https = None
     bitcoind_timeout = None
-    bitcoind_mock = None
-    bitcoind_mock_save_file = None
+    bitcoind_regtest = None
+
+    mock = None
+    use_https = None
 
     if config_file is not None:
 
@@ -221,11 +223,8 @@ def get_bitcoind_config(config_file=None, impl=None):
             else:
                 use_https = 'no'
 
-            if parser.has_option("bitcoind", "save_file"):
-                bitcoind_mock_save_file = parser.get("bitcoind", "save_file")
-
-            if parser.has_option('bitcoind', 'mock'):
-                mock = parser.get('bitcoind', 'mock')
+            if parser.has_option('bitcoind', 'regtest'):
+                mock = parser.get('bitcoind', 'regtest')
             else:
                 mock = 'no'
 
@@ -238,9 +237,9 @@ def get_bitcoind_config(config_file=None, impl=None):
                 bitcoind_use_https = False
 
             if mock.lower() in ["yes", "y", "true", "1", "on"]:
-                bitcoind_mock = True
+                bitcoind_regtest = True
             else:
-                bitcoind_mock = False
+                bitcoind_regtest = False
             
             loaded = True
 
@@ -251,9 +250,8 @@ def get_bitcoind_config(config_file=None, impl=None):
         bitcoind_user = 'blockstack'
         bitcoind_passwd = 'blockstacksystem'
         bitcoind_use_https = False
-        bitcoind_mock = False
+        bitcoind_regtest = False
         bitcoind_timeout = 300
-        bitcoind_mock_save_file = None
 
     default_bitcoin_opts = {
         "bitcoind_user": bitcoind_user,
@@ -262,9 +260,12 @@ def get_bitcoind_config(config_file=None, impl=None):
         "bitcoind_port": bitcoind_port,
         "bitcoind_use_https": bitcoind_use_https,
         "bitcoind_timeout": bitcoind_timeout,
-        "bitcoind_mock": bitcoind_mock,
-        "bitcoind_mock_save_file": bitcoind_mock_save_file
+        "bitcoind_regtest": bitcoind_regtest,
     }
+
+    for (k, v) in default_bitcoin_opts.items():
+        if v is None:
+            del default_bitcoin_opts[k]
 
     return default_bitcoin_opts
 
