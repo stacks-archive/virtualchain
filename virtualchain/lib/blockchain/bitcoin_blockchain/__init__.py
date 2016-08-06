@@ -21,5 +21,8 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key
-from authproxy import *
+from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key, \
+        make_payment_script, address_reencode
+
+from .multisig import *
+from .authproxy import *

@@ -30,4 +30,6 @@ from nulldata import get_nulldata, has_nulldata
 from session import BitcoindConnection, create_bitcoind_connection, get_logger
 from session import connect_bitcoind_impl as default_connect_bitcoind 
 
-from bitcoin_blockchain import BitcoinPrivateKey, BitcoinPublicKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key
+from bitcoin_blockchain import BitcoinPrivateKey, BitcoinPublicKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key, \
+        multisig_version_byte, make_multisig_info, parse_multisig_redeemscript, parse_multisig_scriptsig, \
+        AuthServiceProxy, make_payment_script, address_reencode, make_multisig_address, make_multisig_wallet
