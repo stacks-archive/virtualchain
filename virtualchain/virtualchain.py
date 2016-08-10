@@ -35,7 +35,7 @@ import errno
 
 from ConfigParser import SafeConfigParser
 
-from .lib import config, workpool, indexer
+from .lib import config, indexer
 from .lib.blockchain import session
 from pybitcoin import BitcoindClient, ChainComClient
 
@@ -69,7 +69,7 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine):
         try:
 
             # advance state
-            indexer.StateEngine.build(bitcoind_opts, last_block+1, state_engine)
+            indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine)
             break
 
         except Exception, e:
@@ -117,7 +117,7 @@ def run_virtualchain( state_engine ):
 
     global running
 
-    connect_bitcoind = session.get_connect_bitcoind()
+    connect_bitcoind = session.connect_bitcoind_impl
     config_file = config.get_config_filename()
     bitcoin_opts = config.get_bitcoind_config(config_file)
 
@@ -126,8 +126,6 @@ def run_virtualchain( state_engine ):
     # command-line overrides config file
     for (k, v) in arg_bitcoin_opts.items():
         bitcoin_opts[k] = v
-
-    log.debug("multiprocessing config = (%s, %s)" % (config.configure_multiprocessing(bitcoin_opts)))
 
     try:
 
@@ -161,15 +159,17 @@ def setup_virtualchain(impl=None, testset=False, bitcoind_connection_factory=Non
     if impl is not None:
         config.set_implementation(impl, testset)
 
+    '''
     if bitcoind_connection_factory is not None:
         workpool.set_connect_bitcoind( bitcoind_connection_factory )
-
+    
     if index_worker_env is not None: 
         # expect a dict
         if type(index_worker_env) != dict:
             raise Exception("index_worker_env must be a dictionary")
 
         workpool.set_default_worker_env( index_worker_env )
+    '''
 
 
 def virtualchain_set_opfields( op, **fields ):
@@ -201,8 +201,10 @@ def connect_bitcoind( opts ):
     to by the environment variable
     VIRTUALCHAIN_MOD_CONNECT_BLOCKCHAIN.
     """
-    connect_bitcoind_factory = workpool.multiprocess_connect_bitcoind()
+    # connect_bitcoind_factory = workpool.multiprocess_connect_bitcoind()
+    connect_bitcoind_factory = session.connect_bitcoind_impl
     return connect_bitcoind_factory( opts )
+
 
 if __name__ == '__main__':
 
