@@ -28,14 +28,14 @@ from ConfigParser import SafeConfigParser
 
 DEBUG = True
 TESTSET = False
-IMPL = None             # class, package, or instance that implements the virtual chain state
+IMPL = None             # class, package, or instance that implements the virtual chain state engine
 
 """ virtualchain daemon configs
 """
 
 RPC_TIMEOUT = 5  # seconds
 
-MULTIPROCESS_RPC_RETRY = 10
+BLOCK_BATCH_SIZE = 10
 
 REINDEX_FREQUENCY = 10  # in seconds
 
@@ -152,7 +152,7 @@ def get_snapshots_filename(impl=None):
 
     return os.path.join(working_dir, snapshots_filename)
 
-
+'''
 def configure_multiprocessing(bitcoind_opts, impl=None):
     """
     Given the set of bitcoind options (i.e. the location of the bitcoind server),
@@ -178,7 +178,7 @@ def configure_multiprocessing(bitcoind_opts, impl=None):
     else:
         # running remotely
         return (10, 1)
-
+'''
 
 def get_bitcoind_config(config_file=None, impl=None):
     """
@@ -195,8 +195,10 @@ def get_bitcoind_config(config_file=None, impl=None):
     bitcoind_use_https = None
     bitcoind_timeout = None
     bitcoind_regtest = None
+    bitcoind_p2p_port = None
+    bitcoind_spv_path = None
 
-    mock = None
+    regtest = None
     use_https = None
 
     if config_file is not None:
@@ -212,11 +214,17 @@ def get_bitcoind_config(config_file=None, impl=None):
             if parser.has_option('bitcoind', 'port'):
                 bitcoind_port = int(parser.get('bitcoind', 'port'))
 
+            if parser.has_option('bitcoind', 'p2p_port'):
+                bitcoind_p2p_port = int(parser.get('bitcoind', 'p2p_port'))
+
             if parser.has_option('bitcoind', 'user'):
                 bitcoind_user = parser.get('bitcoind', 'user')
 
             if parser.has_option('bitcoind', 'passwd'):
                 bitcoind_passwd = parser.get('bitcoind', 'passwd')
+
+            if parser.has_option('bitcoind', 'spv_path'):
+                bitcoind_spv_path = parser.get('bitcoind', 'spv_path')
 
             if parser.has_option('bitcoind', 'use_https'):
                 use_https = parser.get('bitcoind', 'use_https')
@@ -224,9 +232,9 @@ def get_bitcoind_config(config_file=None, impl=None):
                 use_https = 'no'
 
             if parser.has_option('bitcoind', 'regtest'):
-                mock = parser.get('bitcoind', 'regtest')
+                regtest = parser.get('bitcoind', 'regtest')
             else:
-                mock = 'no'
+                regtest = 'no'
 
             if parser.has_option('bitcoind', 'timeout'):
                 bitcoind_timeout = float(parser.get('bitcoind', 'timeout'))
@@ -236,7 +244,7 @@ def get_bitcoind_config(config_file=None, impl=None):
             else:
                 bitcoind_use_https = False
 
-            if mock.lower() in ["yes", "y", "true", "1", "on"]:
+            if regtest.lower() in ["yes", "y", "true", "1", "on"]:
                 bitcoind_regtest = True
             else:
                 bitcoind_regtest = False
@@ -252,6 +260,8 @@ def get_bitcoind_config(config_file=None, impl=None):
         bitcoind_use_https = False
         bitcoind_regtest = False
         bitcoind_timeout = 300
+        bitcoind_p2p_port = '8333'
+        bitcoind_spv_path = os.path.expanduser("~/.virtualchain-spv-headers.dat")
 
     default_bitcoin_opts = {
         "bitcoind_user": bitcoind_user,
@@ -261,11 +271,9 @@ def get_bitcoind_config(config_file=None, impl=None):
         "bitcoind_use_https": bitcoind_use_https,
         "bitcoind_timeout": bitcoind_timeout,
         "bitcoind_regtest": bitcoind_regtest,
+        "bitcoind_p2p_port": bitcoind_p2p_port,
+        "bitcoind_spv_path": bitcoind_spv_path
     }
-
-    for (k, v) in default_bitcoin_opts.items():
-        if v is None:
-            del default_bitcoin_opts[k]
 
     return default_bitcoin_opts
 
@@ -290,11 +298,17 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
           '--bitcoind-port', type=int,
           help='the bitcoind RPC port to connect to')
     parser.add_argument(
+          '--bitcoind-p2p-port', type=int,
+          help='the bitcoind P2P port to connect to')
+    parser.add_argument(
           '--bitcoind-user',
           help='the username for bitcoind RPC server')
     parser.add_argument(
           '--bitcoind-passwd',
           help='the password for bitcoind RPC server')
+    parser.add_argument(
+          '--bitciond-spv-path',
+          help='the path to store the SPV headers')
     parser.add_argument(
           "--bitcoind-use-https", action='store_true',
           help='use HTTPS to connect to bitcoind')
@@ -305,8 +319,8 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
     args, _ = parser.parse_known_args()
 
     # propagate options
-    for (argname, config_name) in zip(["bitcoind_server", "bitcoind_port", "bitcoind_user", "bitcoind_passwd", "bitcoind_timeout"], \
-                                      ["BITCOIND_SERVER", "BITCOIND_PORT", "BITCOIND_USER", "BITCOIND_PASSWD", "BITCOIND_TIMEOUT"]):
+    for (argname, config_name) in zip(["bitcoind_server", "bitcoind_port", "bitcoind_p2p_port", "bitcoind_user", "bitcoind_passwd", "bitcoind_timeout", "bitcoind_spv_path"], \
+                                      ["BITCOIND_SERVER", "BITCOIND_PORT", "BITCOIND_P2P_PORT", "BITCOIND_USER", "BITCOIND_PASSWD", "BITCOIND_TIMEOUT", "BITCOIND_SPV_PATH"]):
 
         if hasattr(args, argname) and getattr(args, argname) is not None:
 
