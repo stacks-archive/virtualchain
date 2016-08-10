@@ -50,7 +50,6 @@ import simplejson
 from collections import defaultdict 
 
 import config
-import workpool
 import blockchain.transactions as transactions
 import blockchain.session as session
 
@@ -1064,58 +1063,6 @@ class StateEngine( object ):
         return consensus_hash
 
 
-    @classmethod 
-    def workpool_worker_startup( cls, s ):
-        """
-        Initialize a worker indexer
-        """
-        s.free_indexer_memory()
-
-
-    def start_workpool( self, bitcoind_opts ):
-        """
-        Make a work pool for ourselves.
-        Raise an exception if one already exists.
-        NOT THREAD SAFE
-        """
-        if self.pool is not None:
-            raise Exception("Already indexing")
-
-        self.pool = workpool.multiprocess_pool( bitcoind_opts, os.path.abspath( __file__ ) )
-        return True
-
-
-    def stop_workpool(self):
-        """
-        Make sure our workpool is stopped.
-        NOT THREAD SAFE
-        """
-        if self.pool is None:
-            return True 
-
-        self.pool.close()
-        self.pool.terminate()
-        rc = self.pool.join(timeout=5.0)
-        if not rc:
-            # some stragglers 
-            log.debug("Killing workpool stragglers")
-            self.pool.kill()
-            rc = self.pool.join(timeout=5.0)
-            if not rc:
-                log.error("FATAL: failed to join workpool")
-                sys.exit(1)
-
-        self.pool = None
-        return True
-
-     
-    def get_workpool(self):
-        """
-        Get our workpool
-        """
-        return self.pool
-
-
     @classmethod
     def build( cls, bitcoind_opts, end_block_id, state_engine ):
         """
@@ -1128,101 +1075,68 @@ class StateEngine( object ):
         Note that this method can take some time (hours, days) to complete 
         when called from the first block.
         
-        This method is *NOT* thread-safe.  However, it can be interrupted 
-        with the "stop_build" method.
-        
         Return True on success 
         Return False on error
         Raise an exception on recoverable error--the caller should simply try again.
         Exit on irrecoverable error--do not try to make forward progress
         """
-        
+       
         first_block_id = state_engine.lastblock + 1
         if first_block_id >= end_block_id:
             # built 
             log.debug("Up-to-date (%s >= %s)" % (first_block_id, end_block_id))
             return True 
 
-        num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
-
         rc = True
+        batch_size = config.BLOCK_BATCH_SIZE
 
-        state_engine.start_workpool( bitcoind_opts )
+        log.debug("Sync virtualchain state from %s to %s" % (first_block_id, end_block_id) )
         
-        try:
+        for block_id in xrange( first_block_id, end_block_id+1, batch_size ):
             
-            log.debug("Process blocks %s to %s" % (first_block_id, end_block_id) )
-            
-            for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
+            if not rc:
+                break 
+           
+            last_block_id = min(block_id + batch_size, end_block_id)
+            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, chain_tip_height=end_block_id )
+            if block_ids_and_txs is None:
+                raise Exception("Failed to get virtual transactions %s to %s" % (block_id, last_block_id))
+
+            # process in order by block ID
+            block_ids_and_txs.sort()
+           
+            for processed_block_id, txs in block_ids_and_txs:
+
+                if state_engine.get_consensus_at( processed_block_id ) is not None:
+                    raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
+
+                ops = state_engine.parse_block( processed_block_id, txs )
+                consensus_hash = state_engine.process_block( processed_block_id, ops )
                 
-                if not rc:
-                    break 
+                log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
                 
-                if state_engine.get_workpool() is None:
-                    # interrupted 
-                    log.debug("Build interrupted")
+                if consensus_hash is None:
+                    
+                    # failure to save is a fatal error 
                     rc = False
-                    break 
-                
-                block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
-               
-                # returns: [(block_id, txs)]
-                block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( state_engine.get_workpool(), bitcoind_opts, block_ids )
-                
-                # process in order by block ID
-                block_ids_and_txs.sort()
-               
-                for processed_block_id, txs in block_ids_and_txs:
+                    log.error("FATAL: Failed to process block %d" % processed_block_id )
+                    sys.exit(1)
+                    break
 
-                    if state_engine.get_consensus_at( processed_block_id ) is not None:
-                        raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
-
-                    ops = state_engine.parse_block( processed_block_id, txs )
-                    consensus_hash = state_engine.process_block( processed_block_id, ops )
-                    
-                    log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
-                    
-                    if consensus_hash is None:
-                        
-                        # failure to save is a fatal error 
+                # sanity check, if given 
+                expected_consensus_hash = state_engine.get_expected_consensus_at( processed_block_id )
+                if expected_consensus_hash is not None:
+                    if str(consensus_hash) != str(expected_consensus_hash):
                         rc = False
-                        log.error("FATAL: Failed to process block %d" % processed_block_id )
+                        log.error("FATAL: DIVERGENCE DETECTED AT %s: %s != %s" % (processed_block_id, consensus_hash, expected_consensus_hash))
                         sys.exit(1)
                         break
-
-                    # sanity check, if given 
-                    expected_consensus_hash = state_engine.get_expected_consensus_at( processed_block_id )
-                    if expected_consensus_hash is not None:
-                        if str(consensus_hash) != str(expected_consensus_hash):
-                            rc = False
-                            log.error("FATAL: DIVERGENCE DETECTED AT %s: %s != %s" % (processed_block_id, consensus_hash, expected_consensus_hash))
-                            sys.exit(1)
-                            break
-            
-            log.debug("Last block is %s" % state_engine.lastblock )
-
-        except:
-            
-            state_engine.stop_workpool()
-            raise
        
-        state_engine.stop_workpool()
+        
+        log.debug("Last block is %s" % state_engine.lastblock )
         return rc
     
-    
-    def stop_build( self ):
-        """
-        Stop an in-progress build() invocation.
-        Call from a separate thread from build()
-        
-        If the build() method is not concurrently running,
-        this method will do nothing.
-        """
-        
-        log.debug("%s: Stop building" % os.getpid())
-        self.stop_workpool()
-      
-
+   
     def get_consensus_at( self, block_id ):
         """
         Get the consensus hash at a given block
@@ -1345,7 +1259,7 @@ def get_index_range( bitcoind ):
 
     return start_block, current_block
 
-
+'''
 def indexer_main_loop_body( key, payload ):
     """
     Worker main loop: parse a blockchain RPC
@@ -1368,4 +1282,4 @@ if __name__ == "__main__":
 
     log.debug("Worker %s starting" % (os.getpid()))
     workpool.multiprocess_worker_main( indexer_main_loop_body )
-
+'''
