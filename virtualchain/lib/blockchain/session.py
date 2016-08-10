@@ -178,6 +178,14 @@ def connect_bitcoind_impl( bitcoind_opts ):
     Create a connection to bitcoind, using a dict of config options.
     """
 
+    if 'bitcoind_port' in bitcoind_opts.keys() and bitcoind_opts['bitcoind_port'] is None:
+        log.error("No port given")
+        raise ValueError("No RPC port given (bitcoind_port)")
+
+    if 'bitcoind_timeout' in bitcoind_opts.keys() and bitcoind_opts['bitcoind_timeout'] is None:
+        # default
+        bitcoind_opts['bitcoind_timeout'] = 300
+
     try:
         int(bitcoind_opts['bitcoind_port'])
     except:
