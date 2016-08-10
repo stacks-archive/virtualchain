@@ -39,6 +39,7 @@ import protocoin
 from protocoin.clients import *
 from protocoin.serializers import *
 from protocoin.fields import *
+from protocoin.exceptions import *
 
 from keys import version_byte as VERSION_BYTE
 
@@ -773,6 +774,7 @@ class SPVClient(object):
             if not rc:
                 raise Exception("Failed to verify headers (stored in '%s')" % path)
 
+        log.debug("synced headers from %s to %s in %s" % (current_block_id, last_block_id, path))
         return True
 
 
