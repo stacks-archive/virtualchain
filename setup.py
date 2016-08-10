@@ -42,7 +42,8 @@ setup(
     install_requires=[
         'pybitcoin>=0.9.8',
         'bitcoin>=1.1.42',
-        'utilitybelt>=0.2.6'
+        'utilitybelt>=0.2.6',
+        'protocoin>=0.2'
     ],
     classifiers=[
         'Intended Audience :: Developers',
