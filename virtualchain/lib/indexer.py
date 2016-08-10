@@ -145,6 +145,10 @@ class StateEngine( object ):
         passed into each implementation method.  It is meant to preserve implementation-
         specific state--in particular, whatever state the implementation expects to be 
         present.
+
+        If @expected_snapshots is given, then this is a dict that maps block heights
+        to their expected consensus hashes.  If the calculated consensus hash does not 
+        match the expected consensus hash, the state engine aborts the program.
         """
         
         self.consensus_hashes = initial_snapshots
@@ -157,7 +161,7 @@ class StateEngine( object ):
         self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
         self.rejected = {}
-        self.expected_snapshots = expected_snapshots.get('snapshots', {})
+        self.expected_snapshots = expected_snapshots
         self.backup_frequency = backup_frequency
         self.backup_max_age = backup_max_age
         self.resume_offset = resume_offset
@@ -1016,7 +1020,7 @@ class StateEngine( object ):
         return new_ops
     
     
-    def process_block( self, block_id, ops, backup=False ):
+    def process_block( self, block_id, ops, backup=False, expected_snapshots=None ):
         """
         Top-level block processing method.
         Feed the block and its OP_RETURN transactions 
@@ -1029,6 +1033,9 @@ class StateEngine( object ):
         """
         
         log.debug("Process block %s (%s virtual transactions)" % (block_id, len(ops)))
+
+        if expected_snapshots is None:
+            expected_snapshots = self.expected_snapshots
         
         self.save_num_vtxs( block_id, len(ops) )
 
@@ -1044,6 +1051,11 @@ class StateEngine( object ):
         sanitized_ops = {}  # for save()
 
         consensus_hash = self.snapshot( block_id, new_ops['virtualchain_ordered'] )
+
+        # sanity check 
+        if expected_snapshots.has_key(block_id) and expected_snapshots[block_id] != consensus_hash:
+            log.error("FATAL: consensus hash mismatch at height %s: %s != %s" % (block_id, expected_snapshots[block_id], consensus_hash))
+            sys.exit(1)
 
         for op in new_ops.keys():
 
@@ -1064,7 +1076,7 @@ class StateEngine( object ):
 
 
     @classmethod
-    def build( cls, bitcoind_opts, end_block_id, state_engine ):
+    def build( cls, bitcoind_opts, end_block_id, state_engine, expected_snapshots={} ):
         """
         Top-level call to process all blocks in the blockchain.
         Goes and fetches all OP_RETURN nulldata in order,
@@ -1111,7 +1123,7 @@ class StateEngine( object ):
                     raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
 
                 ops = state_engine.parse_block( processed_block_id, txs )
-                consensus_hash = state_engine.process_block( processed_block_id, ops )
+                consensus_hash = state_engine.process_block( processed_block_id, ops, expected_snapshots=expected_snapshots )
                 
                 log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
                 
