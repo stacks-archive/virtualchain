@@ -37,7 +37,6 @@ from ConfigParser import SafeConfigParser
 
 from .lib import config, indexer
 from .lib.blockchain import session
-from pybitcoin import BitcoindClient, ChainComClient
 
 log = session.get_logger("virtualchain")
 
@@ -48,7 +47,7 @@ state_engine = None
 running = False
 
 
-def sync_virtualchain(bitcoind_opts, last_block, state_engine):
+def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshots={} ):
     """
     Synchronize the virtual blockchain state up until a given block.
 
@@ -59,7 +58,7 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine):
 
     Store the state engine state, consensus snapshots, and last block to the working directory.
     Return 0 on success
-    Raise an exception on error
+    Abort the program on error.  The implementation should catch timeouts and connection errors
     """
 
     start = datetime.datetime.now()
@@ -69,15 +68,13 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine):
         try:
 
             # advance state
-            indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine)
+            indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots )
             break
-
+        
         except Exception, e:
-            # probably offline; exponential back-off
             log.exception(e)
-            attempts += 1
-            time.sleep(min(300, 2**(attempts) + random.randint(0, 2**(attempts-1))))
-            continue
+            log.error("Failed to synchronize chain; exiting to safety")
+            sys.exit(1)
 
     time_taken = "%s seconds" % (datetime.datetime.now() - start).seconds
     log.info(time_taken)
