@@ -24,12 +24,9 @@
 import transactions 
 import session
 
-from transactions import get_bitcoind, getrawtransaction, getrawtransaction_async, getblockhash, getblockhash_async, getblock, getblock_async, get_sender_and_amount_in_from_txn, \
-   get_total_out, process_nulldata_tx_async, get_nulldata_txs_in_blocks, block_header_verify, block_verify, tx_to_hex, tx_verify, block_header_to_hex 
-from nulldata import get_nulldata, has_nulldata
+from transactions import get_virtual_transactions
+
 from session import BitcoindConnection, create_bitcoind_connection, get_logger
 from session import connect_bitcoind_impl as default_connect_bitcoind 
 
-from bitcoin_blockchain import BitcoinPrivateKey, BitcoinPublicKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key, \
-        multisig_version_byte, make_multisig_info, parse_multisig_redeemscript, parse_multisig_scriptsig, \
-        AuthServiceProxy, make_payment_script, address_reencode, make_multisig_address, make_multisig_wallet
+from bitcoin_blockchain import *
