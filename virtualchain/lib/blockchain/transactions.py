@@ -85,20 +85,56 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
     # synchronize SPV headers
     SPVClient.init( headers_path )
-    rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, chain_tip_height - 1 )
-    if not rc:
-        log.error("Failed to synchronize SPV headers (%s) up to %s" % (headers_path, last_block_height))
-        return None
 
-    # fetch all blocks
-    downloader = BlockchainDownloader( blockchain_opts, blockchain_opts['bitcoind_spv_path'], first_block_height, last_block_height - 1, \
+    rc = None
+
+    for i in xrange(0, 100000000000, 1):
+        # basically try forever
+        try:
+            rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, chain_tip_height - 1 )
+            if not rc:
+                log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, min(i, 3600)))
+                time.sleep( min(i, 3600) )
+                continue
+
+            else:
+                break
+
+        except SystemExit, s:
+            log.error("Aborting on SPV header sync")
+            sys.exit(1)
+
+        except Exception, e:
+            log.exception(e)
+            log.debug("Try again in %s seconds" % (min(i, 3600)))
+            time.sleep( min(i, 3600) )
+            continue
+
+    for i in xrange(0, 10000000000000, 1):
+        # basically try forever
+        try:
+
+            # fetch all blocks
+            downloader = BlockchainDownloader( blockchain_opts, blockchain_opts['bitcoind_spv_path'], first_block_height, last_block_height - 1, \
                                        p2p_port=blockchain_opts['bitcoind_p2p_port'] )
 
-    try:
-        rc = downloader.run()
-    except Exception, e:
-        log.exception(e)
-        return None
+            rc = downloader.run()
+            if not rc:
+                log.error("Failed to fetch %s-%s; trying again in %s seconds" % (first_block_height, last_block_height, min(i, 3600)))
+                time.sleep( min(i, 3600) )
+                continue
+            else:
+                break
+
+        except SystemExit, s:
+            log.error("Aborting on blockchain sync")
+            sys.exit(1)
+
+        except Exception, e:
+            log.exception(e)
+            log.debug("Try again in %s seconds" % (min(i, 3600)))
+            time.sleep( min(i, 3600) )
+            continue            
 
     if not rc:
         log.error("Failed to fetch blocks %s-%s" % (first_block_height, last_block_height))
