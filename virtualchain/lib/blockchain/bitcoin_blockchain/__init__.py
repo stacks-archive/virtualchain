@@ -26,3 +26,7 @@ from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, s
 
 from .multisig import *
 from .authproxy import *
+
+from .spv import SPVClient
+from .blocks import BlockchainDownloader
+from .bits import *
