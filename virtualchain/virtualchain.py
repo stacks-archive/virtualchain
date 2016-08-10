@@ -47,7 +47,7 @@ state_engine = None
 running = False
 
 
-def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshots={} ):
+def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshots={}, tx_filter=None ):
     """
     Synchronize the virtual blockchain state up until a given block.
 
@@ -68,7 +68,7 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshot
         try:
 
             # advance state
-            indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots )
+            indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots, tx_filter=tx_filter )
             break
         
         except Exception, e:

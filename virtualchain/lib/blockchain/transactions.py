@@ -45,7 +45,7 @@ log = session.get_logger("virtualchain")
 
 from bitcoin_blockchain.bits import *
 
-def get_virtual_transactions( blockchain_opts, first_block_height, last_block_height, chain_tip_height=None, first_block_hash=None ):
+def get_virtual_transactions( blockchain_opts, first_block_height, last_block_height, chain_tip_height=None, first_block_hash=None, tx_filter=None ):
     """
     Get the sequence of virtualchain transactions from the blockchain.
     Each transaction returned will be a `nulldata` transaction.
@@ -116,7 +116,7 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
             # fetch all blocks
             downloader = BlockchainDownloader( blockchain_opts, blockchain_opts['bitcoind_spv_path'], first_block_height, last_block_height - 1, \
-                                       p2p_port=blockchain_opts['bitcoind_p2p_port'] )
+                                       p2p_port=blockchain_opts['bitcoind_p2p_port'], tx_filter=tx_filter )
 
             rc = downloader.run()
             if not rc:

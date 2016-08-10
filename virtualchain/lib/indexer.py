@@ -1076,7 +1076,7 @@ class StateEngine( object ):
 
 
     @classmethod
-    def build( cls, bitcoind_opts, end_block_id, state_engine, expected_snapshots={} ):
+    def build( cls, bitcoind_opts, end_block_id, state_engine, expected_snapshots={}, tx_filter=None ):
         """
         Top-level call to process all blocks in the blockchain.
         Goes and fetches all OP_RETURN nulldata in order,
@@ -1110,7 +1110,7 @@ class StateEngine( object ):
                 break 
            
             last_block_id = min(block_id + batch_size, end_block_id)
-            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, chain_tip_height=end_block_id )
+            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, chain_tip_height=end_block_id, tx_filter=tx_filter )
             if block_ids_and_txs is None:
                 raise Exception("Failed to get virtual transactions %s to %s" % (block_id, last_block_id))
 

@@ -55,7 +55,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
     coin = None
 
-    def __init__(self, bitcoind_opts, spv_headers_path, first_block_height, last_block_height, p2p_port=None, sock=None ):
+    def __init__(self, bitcoind_opts, spv_headers_path, first_block_height, last_block_height, p2p_port=None, sock=None, tx_filter=None ):
         """
         Before calling this, the headers must be synchronized
         @last_block_height is *inclusive*
@@ -88,6 +88,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
         self.first_block_height = first_block_height
         self.last_block_height = last_block_height
         self.finished = False
+        self.tx_filter = tx_filter
 
         self.blocks = {}        # map height to block hash
         self.block_info = {}    # map block hash to block data {'height': ..., 'header': ..., 'txns': ..., 'handled': True|False}
@@ -597,6 +598,12 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
             # remember the nulldata 
             txdata['nulldata'] = nulldata_payload
+
+            # do we actually want this?
+            if self.tx_filter is not None:
+                if not self.tx_filter( txdata ):
+                    continue
+
             nulldata_txs.append( txdata )
 
 
