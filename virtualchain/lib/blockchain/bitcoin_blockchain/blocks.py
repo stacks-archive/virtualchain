@@ -202,6 +202,10 @@ class BlockchainDownloader( BitcoinBasicClient ):
         """
         Fetch all sender txs via JSON-RPC,
         and merge them into our block data.
+
+        Try backing off (up to 5 times) if we fail
+        to fetch transactions via JSONRPC
+
         Return True on success
         Raise on error
         """
@@ -221,20 +225,35 @@ class BlockchainDownloader( BitcoinBasicClient ):
                 sender_txid_batch = sender_txid_batches[i]
                 log.debug("Fetch %s TXs via JSON-RPC (%s-%s of %s)" % (len(sender_txid_batch), i * batch_size, i * batch_size + len(sender_txid_batch), len(sender_txids)))
 
-                sender_txs = self.fetch_txs_rpc( self.bitcoind_opts, sender_txid_batch )
-                if sender_txs is None:
-                    raise Exception("Failed to fetch missing transactions")
+                sender_txs = None
 
+                for i in xrange(0, 5):
+                    sender_txs = self.fetch_txs_rpc( self.bitcoind_opts, sender_txid_batch )
+                    if sender_txs is None:
+                        log.error("Failed to fetch transactions; trying again (%s of %s)" % (i+1, 5))
+                        time.sleep(i+1)
+                        continue
+
+                if sender_txs is None:
+                    raise Exception("Failed to fetch transactions")
+                
                 # pair back up with nulldata transactions
                 for sender_txid, sender_tx in sender_txs.items():
+
                     assert sender_txid in self.sender_info.keys(), "Unsolicited sender tx %s" % sender_txid
 
                     # match sender outputs to the nulldata tx's inputs
                     for nulldata_input_vout_index in self.sender_info[sender_txid].keys():
-                        assert nulldata_input_vout_index < len(sender_tx['vout']), "Ouptut index %s is out of bounds for %s" % (out_index, sender_txid)
-
-                        # save sender info
-                        self.add_sender_info( sender_txid, nulldata_input_vout_index, sender_tx['vout'][nulldata_input_vout_index] )
+                        if sender_txid != "0000000000000000000000000000000000000000000000000000000000000000":
+                            # regular tx, not coinbase
+                            assert nulldata_input_vout_index < len(sender_tx['vout']), "Ouptut index %s is out of bounds for %s" % (out_index, sender_txid)
+                        
+                            # save sender info
+                            self.add_sender_info( sender_txid, nulldata_input_vout_index, sender_tx['vout'][nulldata_input_vout_index] )
+                        
+                        else:
+                            # coinbase
+                            self.add_sender_info( sender_txid, nulldata_input_vout_index, sender_tx['vout'][0] )
 
                     # update accounting
                     self.num_txs_received += 1
@@ -450,6 +469,8 @@ class BlockchainDownloader( BitcoinBasicClient ):
         go and create a "verbose" transaction structure
         containing all the information in a nice, easy-to-read
         dict (i.e. like what bitcoind would give us).
+
+        Does not work on coinbase transactions.
         """
 
         txn_serializer = TxSerializer()
@@ -638,6 +659,27 @@ class BlockchainDownloader( BitcoinBasicClient ):
         ret = {}
         for i in xrange(0, len(txids)):
             txid = txids[i]
+            if txid == "0000000000000000000000000000000000000000000000000000000000000000":
+                # coinbase; we never send these
+                ret[txid] = {
+                    "version": 1,
+                    "locktime": 0,
+                    "vin": [],
+                    "vout": [
+                        {
+                            "n": 0xffffffff,
+                            "scriptPubKey": {
+                                "asm": "",
+                                "hex": "",
+                                "type": "coinbase"
+                            },
+                            "value": 0      # not really 0, but we don't care about coinbases anyway 
+                        }
+                    ],
+                    "txid": txid,
+                }
+                continue
+
             req = {'method': 'getrawtransaction', 'params': [txid, 0], 'jsonrpc': '2.0', 'id': i}
             reqs.append( req )
 
@@ -666,8 +708,23 @@ class BlockchainDownloader( BitcoinBasicClient ):
             for resp in resp_json:
                 assert 'result' in resp, "Missing result"
 
-                txhex = str(resp['result'])
-                tx_hash = pybitcoin.bin_double_sha256(txhex.decode('hex'))[::-1].encode('hex')
+                txhex = resp['result']
+                assert txhex is not None, "Invalid RPC response '%s' (for %s)" % (simplejson.dumps(resp), txids[resp['id']])
+
+                try:
+
+                    tx_bin = txhex.decode('hex')
+                    assert tx_bin is not None
+
+                    tx_hash_bin = pybitcoin.bin_double_sha256(tx_bin)[::-1]
+                    assert tx_hash_bin is not None
+
+                    tx_hash = tx_hash_bin.encode('hex')
+                    assert tx_hash is not None
+
+                except Exception, e:
+                    log.error("Failed to calculate txid of %s" % txhex)
+                    raise
 
                 # solicited transaction?
                 assert tx_hash in txids, "Unsolicited transaction %s" % tx_hash
