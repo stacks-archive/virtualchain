@@ -581,7 +581,11 @@ class BlockchainDownloader( BitcoinBasicClient ):
             for outp in txdata['vout']:
                 if outp['scriptPubKey']['type'] == 'nulldata':
                     has_nulldata = True
-                    nulldata_payload = bitcoin.deserialize_script( outp['scriptPubKey']['hex'] )[1]
+                    nulldata_payload = bitcoin.deserialize_script(outp['scriptPubKey']['hex'])[1]
+                    if type(nulldata_payload) in [int, long]:
+                        # this is a malformed OP_RETURN, where the varint that should follow OP_RETURN doesn't have the data behind it.
+                        # just take the data after the varint, no matter what it is (i.e. "6a52" will be "")
+                        nulldata_payload = outp['scriptPubKey']['hex'][4:]
 
             # count all txs processed
             self.num_txs_processed += 1
