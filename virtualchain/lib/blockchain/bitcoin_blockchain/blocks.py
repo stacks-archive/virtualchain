@@ -589,6 +589,11 @@ class BlockchainDownloader( BitcoinBasicClient ):
             if not has_nulldata:
                 continue
 
+            # do we actually want this?
+            if self.tx_filter is not None:
+                if not self.tx_filter( txdata ):
+                    continue
+
             # calculate total output (part of fee; will be debited when we discover the senders)
             txdata['fee'] -= sum( int(out['value'] * 10**8) for out in txdata['vout'] )
 
@@ -598,11 +603,6 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
             # remember the nulldata 
             txdata['nulldata'] = nulldata_payload
-
-            # do we actually want this?
-            if self.tx_filter is not None:
-                if not self.tx_filter( txdata ):
-                    continue
 
             nulldata_txs.append( txdata )
 
