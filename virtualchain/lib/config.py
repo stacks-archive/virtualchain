@@ -26,7 +26,10 @@ import os
 import argparse
 from ConfigParser import SafeConfigParser
 
-DEBUG = True
+DEBUG = False
+if os.environ.get("BLOCKSTACK_DEBUG") == "1":
+    DEBUG = True
+
 TESTSET = False
 IMPL = None             # class, package, or instance that implements the virtual chain state
 
