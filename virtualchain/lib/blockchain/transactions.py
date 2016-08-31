@@ -102,7 +102,7 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
         except SystemExit, s:
             log.error("Aborting on SPV header sync")
-            sys.exit(1)
+            os.abort()
 
         except Exception, e:
             log.exception(e)
@@ -128,7 +128,7 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
         except SystemExit, s:
             log.error("Aborting on blockchain sync")
-            sys.exit(1)
+            os.abort()
 
         except Exception, e:
             log.exception(e)
