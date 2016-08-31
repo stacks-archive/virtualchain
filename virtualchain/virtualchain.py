@@ -74,7 +74,7 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshot
         except Exception, e:
             log.exception(e)
             log.error("Failed to synchronize chain; exiting to safety")
-            sys.exit(1)
+            os.abort()
 
     time_taken = "%s seconds" % (datetime.datetime.now() - start).seconds
     log.info(time_taken)
