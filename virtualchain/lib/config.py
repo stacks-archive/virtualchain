@@ -155,33 +155,6 @@ def get_snapshots_filename(impl=None):
 
     return os.path.join(working_dir, snapshots_filename)
 
-'''
-def configure_multiprocessing(bitcoind_opts, impl=None):
-    """
-    Given the set of bitcoind options (i.e. the location of the bitcoind server),
-    come up with some good multiprocessing parameters.
-
-    Return (number of processes, number of blocks per process)
-    Return (None, None) if we could make no inferences from the bitcoind opts.
-    """
-
-    if bitcoind_opts is None:
-        return (None, None)
-
-    if bitcoind_opts.has_key("multiprocessing_num_procs") and bitcoind_opts.has_key("multiprocessing_num_blocks"):
-        return bitcoind_opts["multiprocessing_num_procs"], bitcoind_opts["multiprocessing_num_blocks"]
-
-    if bitcoind_opts.get("bitcoind_server", None) is None:
-        return (None, None)
-
-    if bitcoind_opts["bitcoind_server"] in ["localhost", "127.0.0.1", "::1"]:
-        # running locally
-        return (1, 10)
-
-    else:
-        # running remotely
-        return (10, 1)
-'''
 
 def get_bitcoind_config(config_file=None, impl=None):
     """
