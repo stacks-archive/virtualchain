@@ -24,7 +24,7 @@
 
 # example plugin to a virtual chain that defines its behavior.
 
-def get_virtual_chain_name(testset=False):
+def get_virtual_chain_name():
    """
    Get the name of the virtual chain we're building.
    """
