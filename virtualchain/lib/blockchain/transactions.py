@@ -78,7 +78,11 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
     bitcoind_server = "%s:%s" % (blockchain_opts['bitcoind_server'], blockchain_opts['bitcoind_p2p_port'])
 
     if headers_path is None:
-        raise Exception("bitcoind_spv_path not defined")
+        log.error("FATAL: bitcoind_spv_path not defined in blockchain options")
+        os.abort()
+
+    if not os.path.exists(headers_path):
+        log.debug("Will download SPV headers to %s" % headers_path)
 
     # synchronize SPV headers
     SPVClient.init( headers_path )
