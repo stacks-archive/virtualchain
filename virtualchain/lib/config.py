@@ -30,7 +30,6 @@ DEBUG = False
 if os.environ.get("BLOCKSTACK_DEBUG") == "1":
     DEBUG = True
 
-TESTSET = False
 IMPL = None             # class, package, or instance that implements the virtual chain state engine
 
 """ virtualchain daemon configs
@@ -100,7 +99,7 @@ def get_working_dir(impl=None):
         working_dir = impl.working_dir
 
     else:
-        working_dir = os.path.join(home, "." + impl.get_virtual_chain_name(testset=TESTSET))
+        working_dir = os.path.join(home, "." + impl.get_virtual_chain_name())
 
     if not os.path.exists(working_dir):
         os.makedirs(working_dir)
@@ -115,7 +114,7 @@ def get_config_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    config_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".ini"
+    config_filename = impl.get_virtual_chain_name() + ".ini"
 
     return os.path.join(working_dir, config_filename)
 
@@ -127,7 +126,7 @@ def get_db_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    lastblock_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".db"
+    lastblock_filename = impl.get_virtual_chain_name() + ".db"
 
     return os.path.join(working_dir, lastblock_filename)
 
@@ -139,7 +138,7 @@ def get_lastblock_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    lastblock_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".lastblock"
+    lastblock_filename = impl.get_virtual_chain_name() + ".lastblock"
 
     return os.path.join(working_dir, lastblock_filename)
 
@@ -151,7 +150,7 @@ def get_snapshots_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    snapshots_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".snapshots"
+    snapshots_filename = impl.get_virtual_chain_name() + ".snapshots"
 
     return os.path.join(working_dir, snapshots_filename)
 
@@ -265,7 +264,7 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
     opts = {}
 
     if parser is None:
-        parser = argparse.ArgumentParser(description='%s version %s' % (impl.get_virtual_chain_name(testset=TESTSET), impl.get_virtual_chain_version()))
+        parser = argparse.ArgumentParser(description='%s version %s' % (impl.get_virtual_chain_name(), impl.get_virtual_chain_version()))
 
     parser.add_argument(
           '--bitcoind-server',
@@ -323,14 +322,12 @@ def get_implementation():
     return IMPL
 
 
-def set_implementation(impl, testset):
+def set_implementation(impl):
     """
     Set the package, class, or bundle of methods
     that implements the virtual chain's core logic.
     This method must be called before anything else.
     """
-    global TESTSET
     global IMPL
 
     IMPL = impl
-    TESTSET = testset
