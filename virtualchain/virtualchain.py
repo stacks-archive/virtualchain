@@ -145,7 +145,7 @@ def run_virtualchain( state_engine ):
         _, last_block_id = indexer.get_index_range(bitcoind)
 
 
-def setup_virtualchain(impl=None, testset=False, bitcoind_connection_factory=None, index_worker_env=None):
+def setup_virtualchain(impl=None, bitcoind_connection_factory=None, index_worker_env=None):
     """
     Set up the virtual blockchain.
     Use the given virtual blockchain core logic.
@@ -154,19 +154,7 @@ def setup_virtualchain(impl=None, testset=False, bitcoind_connection_factory=Non
     global connect_bitcoind
 
     if impl is not None:
-        config.set_implementation(impl, testset)
-
-    '''
-    if bitcoind_connection_factory is not None:
-        workpool.set_connect_bitcoind( bitcoind_connection_factory )
-    
-    if index_worker_env is not None: 
-        # expect a dict
-        if type(index_worker_env) != dict:
-            raise Exception("index_worker_env must be a dictionary")
-
-        workpool.set_default_worker_env( index_worker_env )
-    '''
+        config.set_implementation(impl)
 
 
 def virtualchain_set_opfields( op, **fields ):
