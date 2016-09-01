@@ -45,7 +45,7 @@ log = session.get_logger("virtualchain")
 
 from bitcoin_blockchain.bits import *
 
-def get_virtual_transactions( blockchain_opts, first_block_height, last_block_height, chain_tip_height=None, first_block_hash=None, tx_filter=None ):
+def get_virtual_transactions( blockchain_opts, first_block_height, last_block_height, first_block_hash=None, tx_filter=None ):
     """
     Get the sequence of virtualchain transactions from the blockchain.
     Each transaction returned will be a `nulldata` transaction.
@@ -80,9 +80,6 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
     if headers_path is None:
         raise Exception("bitcoind_spv_path not defined")
 
-    if chain_tip_height is None:
-        chain_tip_height = last_block_height 
-
     # synchronize SPV headers
     SPVClient.init( headers_path )
 
@@ -91,10 +88,11 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
     for i in xrange(0, 100000000000, 1):
         # basically try forever
         try:
-            rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, chain_tip_height - 1 )
+            rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, last_block_height - 1 )
             if not rc:
-                log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, min(i, 3600)))
-                time.sleep( min(i, 3600) )
+                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, delay))
+                time.sleep( delay )
                 continue
 
             else:
@@ -106,8 +104,9 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
         except Exception, e:
             log.exception(e)
-            log.debug("Try again in %s seconds" % (min(i, 3600)))
-            time.sleep( min(i, 3600) )
+            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            log.debug("Try again in %s seconds" % delay)
+            time.sleep( delay )
             continue
 
     for i in xrange(0, 10000000000000, 1):
@@ -120,8 +119,9 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
             rc = downloader.run()
             if not rc:
-                log.error("Failed to fetch %s-%s; trying again in %s seconds" % (first_block_height, last_block_height, min(i, 3600)))
-                time.sleep( min(i, 3600) )
+                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                log.error("Failed to fetch %s-%s; trying again in %s seconds" % (first_block_height, last_block_height, delay))
+                time.sleep( delay )
                 continue
             else:
                 break
@@ -132,8 +132,9 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
         except Exception, e:
             log.exception(e)
-            log.debug("Try again in %s seconds" % (min(i, 3600)))
-            time.sleep( min(i, 3600) )
+            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            log.debug("Try again in %s seconds" % delay)
+            time.sleep( delay )
             continue            
 
     if not rc:
