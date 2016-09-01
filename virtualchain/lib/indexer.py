@@ -188,19 +188,29 @@ class StateEngine( object ):
         if os.path.exists( consensus_snapshots_filename ):
            try:
               
-              with open(consensus_snapshots_filename, 'r') as f:
-                 
+              with open(consensus_snapshots_filename, 'r') as f: 
                  db_dict = json.loads(f.read())
-                 
-                 if 'snapshots' in db_dict:
-                     self.consensus_hashes = db_dict['snapshots']
+                 assert 'snapshots' in db_dict
+                 self.consensus_hashes = db_dict['snapshots']
                  
            except Exception, e:
               log.error("FATAL: Failed to read consensus snapshots at '%s'. Aborting." % consensus_snapshots_filename )
               log.exception(e)
               os.abort()
             
-        elif not firsttime:
+        elif firsttime:
+
+            try:
+                with open( consensus_snapshots_filename, 'w') as f:
+                    f.write( json.dumps( {'snapshots': self.consensus_hashes} ) )
+                    f.flush()
+
+            except Exception, e:
+                log.error("FATAL: failed to store initial snapshots to %s. Aborting." % consensus_snapshots_filename )
+                log.exception(e)
+                os.abort()
+
+        else:
             log.error("FATAL: No such file or directory: %s" % consensus_snapshots_filename )
             os.abort()
 
@@ -212,8 +222,19 @@ class StateEngine( object ):
               log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
               log.exception(e)
               os.abort()
-          
-        elif not firsttime:
+         
+        elif firsttime:
+            try:
+                with open(lastblock_filename, "w") as lastblock_f:
+                    lastblock_f.write("%s" % self.lastblock)
+                    lastblock_f.flush()
+
+            except Exception, e:
+                log.error("FATAL: failed to store initial lastblock to %s.  Aborting." % lastblock_filename)
+                log.exception(e)
+                os.abort()
+
+        else:
             log.error("FATAL: No such file or directory: %s" % lastblock_filename )
             os.abort()
 
@@ -301,12 +322,14 @@ class StateEngine( object ):
         if os.path.exists( lastblock_filename ):
            try:
               with open(lastblock_filename, 'r') as f:
-                 lastblock_str = f.read()
+                 lastblock_str = f.read().strip()
                  return int(lastblock_str)
               
            except Exception, e:
               log.error("Failed to read last block number at '%s'" % lastblock_filename )
-              return None 
+              return None
+
+        return None
 
           
     def rollback( self ):
@@ -592,7 +615,6 @@ class StateEngine( object ):
                 f.write(json.dumps(db_dict))
                 f.flush()
             
-            # put this last...
             with open(tmp_lastblock_filename, "w") as lastblock_f:
                 lastblock_f.write("%s" % block_id)
                 lastblock_f.flush()
@@ -1026,7 +1048,7 @@ class StateEngine( object ):
     def process_block( self, block_id, ops, backup=False, expected_snapshots=None ):
         """
         Top-level block processing method.
-        Feed the block and its OP_RETURN transactions 
+        Feed the block and its data transactions 
         through the implementation, to build up the 
         implementation's state.  Cache the 
         resulting data to disk.
@@ -1113,7 +1135,7 @@ class StateEngine( object ):
                 break 
            
             last_block_id = min(block_id + batch_size, end_block_id)
-            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, chain_tip_height=end_block_id, tx_filter=tx_filter )
+            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, tx_filter=tx_filter )
             if block_ids_and_txs is None:
                 raise Exception("Failed to get virtual transactions %s to %s" % (block_id, last_block_id))
 
