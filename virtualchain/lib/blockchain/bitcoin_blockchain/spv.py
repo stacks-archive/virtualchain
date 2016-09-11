@@ -328,10 +328,13 @@ class BlockHeaderClient( BitcoinBasicClient ):
                 f.seek( BLOCK_HEADER_SIZE * next_block_id, os.SEEK_SET )
                 f.write( bin_data )
 
+                if SPVClient.height( self.path ) >= self.last_block_id - 1:
+                    break
+
                 next_block_id += 1
             
         current_block_id = SPVClient.height( self.path )
-        if current_block_id >= self.last_block_id:
+        if current_block_id >= self.last_block_id - 1:
             # got all headers
             self.loop_exit()
             return
@@ -769,6 +772,8 @@ class SPVClient(object):
             # verify headers
             if SPVClient.height(path) < last_block_id:
                 raise Exception("Did not receive all headers up to %s (only got %s)" % (last_block_id, SPVClient.height(path)))
+
+            # defensive: make sure it's *exactly* that many blocks 
 
             rc = SPVClient.verify_header_chain( path )
             if not rc:
