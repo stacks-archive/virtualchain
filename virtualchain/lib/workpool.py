@@ -42,7 +42,8 @@ import cPickle as pickle
 import blockchain.session
 import copy
 import imp
-import platform 
+import platform
+import json
 
 log = blockchain.session.get_logger("virtualchain")
 
@@ -377,12 +378,18 @@ class Workpool(object):
 
         if 'PYTHONPATH' in worker_env and platform.system().lower() == 'darwin':
             # Mac OS X-specific work-around
-            self.worker_bin_path = worker_env['PYTHONPATH'] + "/python"
+            self.worker_env['PYTHONPATH'] = worker_env['PYTHONPATH'] + "/python"
 
         # start processes
         for i in xrange(0, num_workers):
 
-            p = subprocess.Popen([self.worker_bin_path] + worker_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, env=worker_env, close_fds=True)
+            try:
+                p = subprocess.Popen([self.worker_bin_path] + worker_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, env=worker_env, close_fds=True)
+            except Exception, e:
+                log.error("Failed to start worker process '%s'"  self.worker_bin_path)
+                log.error("Worker environment:\n%s" % json.dumps(self.worker_env, indent=4, sort_keys=True))
+                raise
+
             self.procs.append(p)
 
             # put into non-blocking mode
