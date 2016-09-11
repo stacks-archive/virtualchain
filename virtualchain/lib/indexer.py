@@ -170,7 +170,7 @@ class StateEngine( object ):
 
         consensus_snapshots_filename = config.get_snapshots_filename(impl=impl)
         lastblock_filename = config.get_lastblock_filename(impl=impl)
-        
+       
         # if we crashed during a commit, try to finish
         rc = self.commit( startup=True )
         if not rc:
@@ -186,8 +186,9 @@ class StateEngine( object ):
         
         # attempt to load the snapshots 
         if os.path.exists( consensus_snapshots_filename ):
+           log.debug("consensus snapshots at '%s'" % consensus_snapshots_filename)
+
            try:
-              
               with open(consensus_snapshots_filename, 'r') as f: 
                  db_dict = json.loads(f.read())
                  assert 'snapshots' in db_dict
@@ -200,6 +201,7 @@ class StateEngine( object ):
             
         elif firsttime:
 
+            log.debug("consensus snapshots at '%s'" % consensus_snapshots_filename)
             try:
                 with open( consensus_snapshots_filename, 'w') as f:
                     f.write( json.dumps( {'snapshots': self.consensus_hashes} ) )
@@ -216,6 +218,8 @@ class StateEngine( object ):
 
         # what was the last block processed?
         if os.path.exists( lastblock_filename ):
+           log.debug("lastblock at '%s'" % lastblock_filename)
+
            self.lastblock = self.get_lastblock()
            log.debug("Lastblock: %s (%s)" % (self.lastblock, lastblock_filename))
            if self.lastblock is None:
@@ -224,6 +228,7 @@ class StateEngine( object ):
               os.abort()
          
         elif firsttime:
+            log.debug("lastblock at '%s'" % lastblock_filename)
             try:
                 with open(lastblock_filename, "w") as lastblock_f:
                     lastblock_f.write("%s" % self.lastblock)
