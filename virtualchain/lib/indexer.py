@@ -374,9 +374,20 @@ class StateEngine( object ):
             # rollback 
             log.error("Partial write detected.  Not committing.")
             return False
-            
+           
         # basic sanity checks: don't overwrite the db if the file is zero bytes, or if we can't load it
         if os.path.exists( tmp_db_filename ):
+            db_dir = os.path.dirname( tmp_db_filename )
+
+            try:
+                dirfd = os.open(db_dir, os.O_DIRECTORY)
+                os.fsync(dirfd)
+                os.close( dirfd )
+            except Exception, e:
+                log.exception(e)
+                log.error("FATAL: failed to sync directory %s" % db_dir)
+                os.abort()
+
             sb = os.stat( tmp_db_filename )
             if sb.st_size == 0:
                 log.error("Partial write detected: tried to overwrite with zero-sized db!  Will rollback.")
@@ -403,8 +414,20 @@ class StateEngine( object ):
 
         for i in xrange(0, len(listing)):
             file_type, tmp_filename, filename = listing[i]
+            
+            dir_path = os.path.dirname( tmp_filename )
+            dirfd = None
+            try:
+                dirfd = os.open(dir_path, os.O_DIRECTORY)
+                os.fsync(dirfd)
+            except Exception, e:
+                log.exception(e)
+                log.error("FATAL: failed to sync directory %s" % dir_path)
+                os.abort()
+
             if not os.path.exists( tmp_filename ):
                 # no new state written
+                os.close( dirfd )
                 continue  
 
             # commit our new lastblock, consensus hash set, and state engine data
@@ -414,19 +437,26 @@ class StateEngine( object ):
                if sys.platform == 'win32' and os.path.exists( filename ):
                    log.debug("Clear old '%s' %s" % (file_type, filename))
                    os.unlink( filename )
+                   os.fsync( dirfd )
 
                if not backup:
                    log.debug("Rename '%s': %s --> %s" % (file_type, tmp_filename, filename))
                    os.rename( tmp_filename, filename )
+                   os.fsync( dirfd )
+
                else:
                    log.debug("Rename and back up '%s': %s --> %s" % (file_type, tmp_filename, filename))
                    shutil.copy( tmp_filename, tmp_filename + (".%s" % backup_time))
                    os.rename( tmp_filename, filename )
+                   os.fsync( dirfd )
                   
             except Exception, e:
                log.exception(e)
                log.error("Failed to rename '%s' to '%s'" % (tmp_filename, filename))
+               os.close( dirfd )
                return False 
+
+            os.close( dirfd )
            
         return True
        
@@ -1100,7 +1130,6 @@ class StateEngine( object ):
             # failure to save is fatal
             log.error("FATAL: Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
             os.abort()
-            return None 
         
         return consensus_hash
 
