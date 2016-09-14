@@ -80,7 +80,7 @@ def get_logger(name=None):
     log.setLevel( level )
     console = logging.StreamHandler()
     console.setLevel( level )
-    log_format = ('[%(asctime)s] [%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
+    log_format = ('[%(asctime)s] [%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + '.%(thread)d) %(message)s' if DEBUG else '%(message)s')
     formatter = logging.Formatter( log_format )
     console.setFormatter(formatter)
     log.propagate = False
