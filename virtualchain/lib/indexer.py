@@ -1146,12 +1146,12 @@ class StateEngine( object ):
 
         rc = True
 
-        state_engine.start_workpool( bitcoind_opts )
-        
         try:
             
             log.debug("Process blocks %s to %s" % (first_block_id, end_block_id) )
             
+            state_engine.start_workpool( bitcoind_opts )
+
             for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
                 
                 if not rc:
@@ -1199,13 +1199,13 @@ class StateEngine( object ):
                             break
             
             log.debug("Last block is %s" % state_engine.lastblock )
+            state_engine.stop_workpool()
 
         except:
             
             state_engine.stop_workpool()
             raise
        
-        state_engine.stop_workpool()
         return rc
     
     
