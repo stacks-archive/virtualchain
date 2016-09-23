@@ -109,7 +109,7 @@ class StateEngine( object ):
     """
     
 
-    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, resume_offset=0 ):
+    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, resume_offset=0, read_only=True ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -161,6 +161,7 @@ class StateEngine( object ):
         self.backup_frequency = backup_frequency
         self.backup_max_age = backup_max_age
         self.resume_offset = resume_offset
+        self.read_only = read_only
 
         firsttime = True
 
@@ -168,11 +169,12 @@ class StateEngine( object ):
         lastblock_filename = config.get_lastblock_filename(impl=impl)
         
         # if we crashed during a commit, try to finish
-        rc = self.commit( startup=True )
-        if not rc:
-           log.error("Failed to commit partial data.  Rolling back and aborting.")
-           self.rollback()
-           sys.exit(1)
+        if not read_only:
+            rc = self.commit( startup=True )
+            if not rc:
+               log.error("Failed to commit partial data.  Rolling back and aborting.")
+               self.rollback()
+               sys.exit(1)
 
         # can be missing all files, or none of them 
         for fp in [consensus_snapshots_filename, lastblock_filename]:
@@ -332,6 +334,10 @@ class StateEngine( object ):
         
         It is safe to call this method repeatedly until it returns True.
         """
+
+        if self.read_only:
+           log.error("FATAL: read-only")
+           os.abort()
 
         tmp_db_filename = config.get_db_filename(impl=self.impl) + ".tmp"
         tmp_snapshot_filename = config.get_snapshots_filename(impl=self.impl) + ".tmp"
@@ -568,7 +574,11 @@ class StateEngine( object ):
         Raise exception if block_id represents a block 
          we've already processed.
         """
-        
+       
+        if self.read_only:
+           log.error("FATAL: read-only")
+           os.abort()
+
         if block_id < self.lastblock:
            raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
 
