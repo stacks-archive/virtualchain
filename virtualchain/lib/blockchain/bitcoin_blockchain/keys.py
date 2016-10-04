@@ -121,6 +121,27 @@ def make_p2sh_address( script ):
     return addr
 
 
+def is_p2sh_address( address ):
+    """
+    Is the given address a p2sh address?
+    """
+    vb = pybitcoin.b58check_version_byte( address )
+    if vb == multisig_version_byte:
+        return True
+    else:
+        return False
+    
+
+def is_p2sh_script( script_hex ):
+    """
+    Is the given script a p2sh script?
+    """
+    if script_hex.startswith("a914") and script_hex.endswith("87") and len(script_hex) == 46:
+        return True
+    else:
+        return False
+
+
 def address_reencode( address ):
     """
     Depending on whether or not we're in testnet 
