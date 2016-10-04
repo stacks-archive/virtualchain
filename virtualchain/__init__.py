@@ -23,4 +23,4 @@
 
 from .lib import *
 from .version import __version__
-from virtualchain import setup_virtualchain, run_virtualchain, stop_virtualchain, sync_virtualchain, stop_sync_virtualchain, virtualchain_set_opfields, connect_bitcoind
+from virtualchain import setup_virtualchain, sync_virtualchain, virtualchain_set_opfields, connect_bitcoind

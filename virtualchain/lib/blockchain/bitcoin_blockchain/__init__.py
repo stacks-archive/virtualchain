@@ -22,7 +22,7 @@
 """
 
 from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key, \
-        make_payment_script, address_reencode
+        make_payment_script, address_reencode, is_p2sh_script, is_p2sh_address
 
 from .multisig import *
 from .authproxy import *
