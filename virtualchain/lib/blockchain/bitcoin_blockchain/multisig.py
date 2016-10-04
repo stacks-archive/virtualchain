@@ -24,6 +24,7 @@
 import pybitcoin
 import bitcoin
 import traceback
+import sys
 
 from pybitcoin import opcodes
 
@@ -90,11 +91,15 @@ def parse_multisig_redeemscript( redeem_script_hex ):
     Return m, list of public keys on success
     Return (None, None)
     """
+    script_parts = []
+    redeem_script_hex = str(redeem_script_hex)
+
     try:
         script_parts = bitcoin.deserialize_script( redeem_script_hex )
     except:
         if os.environ.get("BLOCKSTACK_TEST") == "1":
             traceback.print_exc()
+            print >> sys.stderr, "Invalid redeem script %s" % redeem_script_hex
 
         return None, None
 
@@ -122,6 +127,7 @@ def parse_multisig_redeemscript( redeem_script_hex ):
     except Exception, e:
         if os.environ.get("BLOCKSTACK_TEST") == "1":
             traceback.print_exc()
+            print >> sys.stderr, "Invalid redeem script %s (parses to %s)" % (redeem_script_hex, script_parts)
 
         return (None, None)
 
