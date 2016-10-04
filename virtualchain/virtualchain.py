@@ -82,69 +82,6 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshot
     return 0
 
 
-def stop_sync_virtualchain(state_engine):
-    """
-    Forcibly stop synchronizing the virtual chain.
-    """
-    state_engine.stop_build()
-
-
-def stop_virtualchain():
-    """
-    Hint to stop running the virtual blockchain.
-    This may take a while, especially if it is in the
-    middle of indexing.
-    """
-    global running
-    running = False
-
-
-def run_virtualchain( state_engine ):
-
-    """
-    Continuously and periodically feed new blocks into the state engine.
-    This method loops pretty much forever; consider calling
-    it from a thread or in a subprocess.  You can stop
-    it with stop_virtualchain(), but it only sets a
-    hint to stop indexing (so it may take a few 10s of seconds).
-
-    Return 0 on success (i.e. on exit)
-    Return 1 on failure
-    """
-
-    global running
-
-    connect_bitcoind = session.connect_bitcoind_impl
-    config_file = config.get_config_filename()
-    bitcoin_opts = config.get_bitcoind_config(config_file)
-
-    arg_bitcoin_opts, argparser = config.parse_bitcoind_args(return_parser=True)
-
-    # command-line overrides config file
-    for (k, v) in arg_bitcoin_opts.items():
-        bitcoin_opts[k] = v
-
-    try:
-
-        bitcoind = connect_bitcoind(bitcoin_opts)
-
-    except Exception, e:
-        log.exception(e)
-        return 1
-
-    _, last_block_id = indexer.get_index_range(bitcoind)
-
-    running = True
-    while running:
-
-        # keep refreshing the index
-        sync_virtualchain(bitcoin_opts, last_block_id, state_engine )
-
-        time.sleep(config.REINDEX_FREQUENCY)
-
-        _, last_block_id = indexer.get_index_range(bitcoind)
-
-
 def setup_virtualchain(impl=None, bitcoind_connection_factory=None, index_worker_env=None):
     """
     Set up the virtual blockchain.
@@ -190,9 +127,3 @@ def connect_bitcoind( opts ):
     connect_bitcoind_factory = session.connect_bitcoind_impl
     return connect_bitcoind_factory( opts )
 
-
-if __name__ == '__main__':
-
-    import impl_ref
-    setup_virtualchain(impl_ref)
-    run_virtualchain()
