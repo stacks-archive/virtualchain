@@ -116,6 +116,9 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
     for i in xrange(0, 10000000000000, 1):
         # basically try forever
         try:
+            
+            if first_block_height > last_block_height - 1:
+                break
 
             # fetch all blocks
             downloader = BlockchainDownloader( blockchain_opts, blockchain_opts['bitcoind_spv_path'], first_block_height, last_block_height - 1, \
