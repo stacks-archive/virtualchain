@@ -224,7 +224,7 @@ class StateEngine( object ):
         if os.path.exists( lastblock_filename ):
            log.debug("lastblock at '%s'" % lastblock_filename)
 
-           self.lastblock = self.get_lastblock()
+           self.lastblock = self.get_lastblock( lastblock_filename=lastblock_filename )
            log.debug("Lastblock: %s (%s)" % (self.lastblock, lastblock_filename))
            if self.lastblock is None:
               log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
@@ -251,17 +251,20 @@ class StateEngine( object ):
             os.abort()
 
 
-    def get_lastblock( self, impl=None ):
+    def get_lastblock( self, lastblock_filename=None, impl=None ):
         """
         What was the last block processed?
         Return the number on success
         Return None on failure to read
         """
 
-        if impl is None:
-            impl = self.impl
+        if lastblock_filename is None:
+            
+            if impl is None:
+                impl = self.impl
 
-        lastblock_filename = config.get_lastblock_filename(impl=impl)
+            lastblock_filename = config.get_lastblock_filename(impl=impl)
+        
         if os.path.exists( lastblock_filename ):
            try:
               with open(lastblock_filename, 'r') as f:
