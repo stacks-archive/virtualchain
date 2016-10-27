@@ -57,18 +57,18 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshot
     off while watching the blockchain.
 
     Store the state engine state, consensus snapshots, and last block to the working directory.
-    Return 0 on success
+    Return True on success
+    Return False if we're supposed to stop indexing
     Abort the program on error.  The implementation should catch timeouts and connection errors
     """
 
+    rc = False
     start = datetime.datetime.now()
-    attempts = 1
-
     while True:
         try:
 
             # advance state
-            indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots, tx_filter=tx_filter )
+            rc = indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots, tx_filter=tx_filter )
             break
         
         except Exception, e:
@@ -79,7 +79,7 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshot
     time_taken = "%s seconds" % (datetime.datetime.now() - start).seconds
     log.info(time_taken)
 
-    return 0
+    return rc
 
 
 def setup_virtualchain(impl=None, bitcoind_connection_factory=None, index_worker_env=None):
