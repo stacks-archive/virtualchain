@@ -48,7 +48,7 @@ import bits
 import traceback
 import logging
 
-log = logging.getLogger("virtualchain-bits")
+log = logging.getLogger("virtualchain")
 
 def tx_is_coinbase( tx ):
     """
