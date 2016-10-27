@@ -47,6 +47,8 @@ import bits
 
 from spv import *
 
+log = logging.getLogger("virtualchain")
+
 class BlockchainDownloader( BitcoinBasicClient ):
     """
     Fetch all transactions from the blockchain 
