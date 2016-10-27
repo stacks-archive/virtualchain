@@ -200,6 +200,6 @@ def connect_bitcoind_impl( bitcoind_opts ):
 
     return create_bitcoind_connection( bitcoind_opts['bitcoind_user'], bitcoind_opts['bitcoind_passwd'], \
                                        bitcoind_opts['bitcoind_server'], int(bitcoind_opts['bitcoind_port']), \
-                                       bitcoind_opts['bitcoind_use_https'], float(bitcoind_opts.get('bitcoind_timeout', 300)) )
+                                       bitcoind_opts.get('bitcoind_use_https', False), float(bitcoind_opts.get('bitcoind_timeout', 300)) )
  
 
