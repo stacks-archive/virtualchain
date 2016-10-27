@@ -230,12 +230,14 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
                 sender_txs = None
 
-                for i in xrange(0, 5):
+                for j in xrange(0, 5):
                     sender_txs = self.fetch_txs_rpc( self.bitcoind_opts, sender_txid_batch )
                     if sender_txs is None:
-                        log.error("Failed to fetch transactions; trying again (%s of %s)" % (i+1, 5))
-                        time.sleep(i+1)
+                        log.error("Failed to fetch transactions; trying again (%s of %s)" % (j+1, 5))
+                        time.sleep(j+1)
                         continue
+
+                    break
 
                 if sender_txs is None:
                     raise Exception("Failed to fetch transactions")
