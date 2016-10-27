@@ -235,6 +235,7 @@ class StateEngine( object ):
         elif firsttime:
             log.debug("lastblock at '%s'" % lastblock_filename)
             try:
+                log.debug("Store lastblock %s to %s" % (self.lastblock, lastblock_filename))
                 with open(lastblock_filename, "w") as lastblock_f:
                     lastblock_f.write("%s" % self.lastblock)
                     lastblock_f.flush()
@@ -521,8 +522,6 @@ class StateEngine( object ):
         return
 
 
-
-
     def clear_old_backups( self, block_id ):
         """
         If we limit the number of backups we make, then clean out old ones
@@ -571,12 +570,14 @@ class StateEngine( object ):
     def save( self, block_id, consensus_hash, pending_ops, backup=False ):
         """
         Write out all state to the working directory.
-        Calls the implementation's 'db_save' method.
+        Calls the implementation's 'db_save' method to store any state for this block.
+        Calls the implementation's 'db_continue' method at the very end, to signal
+        to the implementation that all virtualchain state has been saved.  This method
+        can return False, in which case, indexing stops
         
         Return True on success 
-        Return False on error
-        Raise exception if block_id represents a block 
-         we've already processed.
+        Return False if the implementation wants to exit.
+        Aborts on fatal error
         """
         
         if self.read_only:
@@ -647,9 +648,18 @@ class StateEngine( object ):
 
             # clear out old backups
             self.clear_old_backups( block_id )
+   
+        continue_indexing = True
+        if hasattr(self.impl, "db_continue"):
+            try:
+                continue_indexing = self.impl.db_continue( block_id, consensus_hash )
+            except Exception, e:
+                traceback.print_stack()
+                log.error("FATAL: implementation failed db_continue")
+                os.abort()
 
-            return True
-    
+        return continue_indexing
+
    
     @classmethod
     def calculate_consensus_hash( self, merkle_root ):
@@ -1071,11 +1081,10 @@ class StateEngine( object ):
 
         rc = self.save( block_id, consensus_hash, sanitized_ops, backup=backup )
         if not rc:
-            # failure to save is fatal
-            log.error("FATAL: Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
-            traceback.print_stack()
-            os.abort()
-        
+            # implementation requests early termination 
+            log.debug("Early indexing termination at %s" % block_id)
+            return None
+
         return consensus_hash
 
 
@@ -1114,7 +1123,7 @@ class StateEngine( object ):
                 break 
            
             last_block_id = min(block_id + batch_size, end_block_id)
-            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, tx_filter=tx_filter )
+            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, spv_last_block=end_block_id, tx_filter=tx_filter )
             if block_ids_and_txs is None:
                 raise Exception("Failed to get virtual transactions %s to %s" % (block_id, last_block_id))
 
@@ -1129,15 +1138,13 @@ class StateEngine( object ):
                 ops = state_engine.parse_block( processed_block_id, txs )
                 consensus_hash = state_engine.process_block( processed_block_id, ops, expected_snapshots=expected_snapshots )
                 
-                log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
-                
                 if consensus_hash is None:
-                    
-                    # failure to save is a fatal error 
+                    # request to stop
                     rc = False
-                    log.error("FATAL: Failed to process block %d" % processed_block_id )
-                    traceback.print_stack()
-                    os.abort()
+                    log.debug("Stopped processing at block %s" % processed_block_id)
+                    break
+
+                log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
 
                 # sanity check, if given 
                 expected_consensus_hash = state_engine.get_expected_consensus_at( processed_block_id )
@@ -1148,6 +1155,8 @@ class StateEngine( object ):
                         traceback.print_stack()
                         os.abort()
        
+            if not rc:
+                break
         
         log.debug("Last block is %s" % state_engine.lastblock )
         return rc
