@@ -1123,7 +1123,7 @@ class StateEngine( object ):
                 break 
            
             last_block_id = min(block_id + batch_size, end_block_id)
-            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, spv_last_block=end_block_id, tx_filter=tx_filter )
+            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, spv_last_block=end_block_id - 1, tx_filter=tx_filter )
             if block_ids_and_txs is None:
                 raise Exception("Failed to get virtual transactions %s to %s" % (block_id, last_block_id))
 
