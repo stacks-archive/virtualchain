@@ -45,7 +45,7 @@ log = session.get_logger("virtualchain")
 
 from bitcoin_blockchain.bits import *
 
-def get_virtual_transactions( blockchain_opts, first_block_height, last_block_height, first_block_hash=None, tx_filter=None ):
+def get_virtual_transactions( blockchain_opts, first_block_height, last_block_height, spv_last_block=None, first_block_hash=None, tx_filter=None ):
     """
     Get the sequence of virtualchain transactions from the blockchain.
     Each transaction returned will be a `nulldata` transaction.
@@ -76,6 +76,7 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
 
     headers_path = blockchain_opts['bitcoind_spv_path']
     bitcoind_server = "%s:%s" % (blockchain_opts['bitcoind_server'], blockchain_opts['bitcoind_p2p_port'])
+    spv_last_block = spv_last_block if spv_last_block is not None else last_block_height - 1
 
     if headers_path is None:
         log.error("FATAL: bitcoind_spv_path not defined in blockchain options")
@@ -92,7 +93,7 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
     for i in xrange(0, 100000000000, 1):
         # basically try forever
         try:
-            rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, last_block_height - 1 )
+            rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, spv_last_block )
             if not rc:
                 delay = min( 3600, 2**i + ((2**i) * random.random()) )
                 log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, delay))
