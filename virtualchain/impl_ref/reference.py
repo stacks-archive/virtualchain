@@ -145,3 +145,13 @@ def db_save( block_id, filename, db_state=None ):
    print "\nreference implementation of db_save\n"
    return True
 
+
+def db_continue( block_id, consensus_hash ):
+   """
+   Signal to the implementation that all state for this block
+   has been saved, and that this is now the new consensus hash.
+
+   Return value indicates whether or not we should continue indexing.
+   """
+   print "\nreference implementation of db_continue\n"
+   return True
