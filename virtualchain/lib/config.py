@@ -167,14 +167,12 @@ def get_bitcoind_config(config_file=None, impl=None):
     bitcoind_port = None
     bitcoind_user = None
     bitcoind_passwd = None
-    bitcoind_use_https = None
     bitcoind_timeout = None
     bitcoind_regtest = None
     bitcoind_p2p_port = None
     bitcoind_spv_path = None
 
     regtest = None
-    use_https = None
 
     if config_file is not None:
 
@@ -201,11 +199,6 @@ def get_bitcoind_config(config_file=None, impl=None):
             if parser.has_option('bitcoind', 'spv_path'):
                 bitcoind_spv_path = parser.get('bitcoind', 'spv_path')
 
-            if parser.has_option('bitcoind', 'use_https'):
-                use_https = parser.get('bitcoind', 'use_https')
-            else:
-                use_https = 'no'
-
             if parser.has_option('bitcoind', 'regtest'):
                 regtest = parser.get('bitcoind', 'regtest')
             else:
@@ -213,11 +206,6 @@ def get_bitcoind_config(config_file=None, impl=None):
 
             if parser.has_option('bitcoind', 'timeout'):
                 bitcoind_timeout = float(parser.get('bitcoind', 'timeout'))
-
-            if use_https.lower() in ["yes", "y", "true", "1", "on"]:
-                bitcoind_use_https = True
-            else:
-                bitcoind_use_https = False
 
             if regtest.lower() in ["yes", "y", "true", "1", "on"]:
                 bitcoind_regtest = True
@@ -229,13 +217,12 @@ def get_bitcoind_config(config_file=None, impl=None):
     if not loaded:
 
         bitcoind_server = 'bitcoin.blockstack.com'
-        bitcoind_port = '8332'
+        bitcoind_port = 8332
         bitcoind_user = 'blockstack'
         bitcoind_passwd = 'blockstacksystem'
-        bitcoind_use_https = False
         bitcoind_regtest = False
         bitcoind_timeout = 300
-        bitcoind_p2p_port = '8333'
+        bitcoind_p2p_port = 8333
         bitcoind_spv_path = os.path.expanduser("~/.virtualchain-spv-headers.dat")
 
     default_bitcoin_opts = {
@@ -243,7 +230,6 @@ def get_bitcoind_config(config_file=None, impl=None):
         "bitcoind_passwd": bitcoind_passwd,
         "bitcoind_server": bitcoind_server,
         "bitcoind_port": bitcoind_port,
-        "bitcoind_use_https": bitcoind_use_https,
         "bitcoind_timeout": bitcoind_timeout,
         "bitcoind_regtest": bitcoind_regtest,
         "bitcoind_p2p_port": bitcoind_p2p_port,
@@ -285,9 +271,6 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
           '--bitciond-spv-path',
           help='the path to store the SPV headers')
     parser.add_argument(
-          "--bitcoind-use-https", action='store_true',
-          help='use HTTPS to connect to bitcoind')
-    parser.add_argument(
           "--bitcoind-timeout", type=int,
           help='the number of seconds to wait before timing out a request')
 
@@ -301,13 +284,7 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
 
             opts[argname] = getattr(args, argname)
             setattr(config, config_name, getattr(args, argname))
-
-    if args.bitcoind_use_https:
-        opts['bitcoind_use_https'] = True
-
-    else:
-        opts['bitcoind_use_https'] = False
-
+    
     if return_parser:
         return opts, parser
     else:
