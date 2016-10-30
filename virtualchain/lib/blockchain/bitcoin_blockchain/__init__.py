@@ -3,8 +3,8 @@
 """
     Virtualchain
     ~~~~~
-    copyright: (c) 2014 by Halfmoon Labs, Inc.
-    copyright: (c) 2015 by Blockstack.org
+    copyright: (c) 2014-2015 by Halfmoon Labs, Inc.
+    copyright: (c) 2016 by Blockstack.org
     
     This file is part of Virtualchain
     
@@ -21,12 +21,12 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import transactions 
-import session
+from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte, analyze_private_key, \
+        make_payment_script, address_reencode, is_p2sh_script, is_p2sh_address
 
-from transactions import get_virtual_transactions
+from .multisig import *
+from .authproxy import *
 
-from session import BitcoindConnection, create_bitcoind_connection, get_logger
-from session import connect_bitcoind_impl as default_connect_bitcoind 
-
-from bitcoin_blockchain import *
+from .spv import SPVClient
+from .blocks import BlockchainDownloader
+from .bits import *

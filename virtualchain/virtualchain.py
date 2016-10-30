@@ -35,9 +35,8 @@ import errno
 
 from ConfigParser import SafeConfigParser
 
-from .lib import config, workpool, indexer
+from .lib import config, indexer
 from .lib.blockchain import session
-from pybitcoin import BitcoindClient, ChainComClient
 
 log = session.get_logger("virtualchain")
 
@@ -48,7 +47,7 @@ state_engine = None
 running = False
 
 
-def sync_virtualchain(bitcoind_opts, last_block, state_engine):
+def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshots={}, tx_filter=None ):
     """
     Synchronize the virtual blockchain state up until a given block.
 
@@ -58,99 +57,32 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine):
     off while watching the blockchain.
 
     Store the state engine state, consensus snapshots, and last block to the working directory.
-    Return 0 on success
-    Raise an exception on error
+    Return True on success
+    Return False if we're supposed to stop indexing
+    Abort the program on error.  The implementation should catch timeouts and connection errors
     """
 
+    rc = False
     start = datetime.datetime.now()
-    attempts = 1
-
     while True:
         try:
 
             # advance state
-            indexer.StateEngine.build(bitcoind_opts, last_block+1, state_engine)
+            rc = indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots, tx_filter=tx_filter )
             break
-
+        
         except Exception, e:
-            # probably offline; exponential back-off
             log.exception(e)
-            attempts += 1
-            time.sleep(min(300, 2**(attempts) + random.randint(0, 2**(attempts-1))))
-            continue
+            log.error("Failed to synchronize chain; exiting to safety")
+            os.abort()
 
     time_taken = "%s seconds" % (datetime.datetime.now() - start).seconds
     log.info(time_taken)
 
-    return 0
+    return rc
 
 
-def stop_sync_virtualchain(state_engine):
-    """
-    Forcibly stop synchronizing the virtual chain.
-    """
-    state_engine.stop_build()
-
-
-def stop_virtualchain():
-    """
-    Hint to stop running the virtual blockchain.
-    This may take a while, especially if it is in the
-    middle of indexing.
-    """
-    global running
-    running = False
-
-
-def run_virtualchain( state_engine ):
-
-    """
-    Continuously and periodically feed new blocks into the state engine.
-    This method loops pretty much forever; consider calling
-    it from a thread or in a subprocess.  You can stop
-    it with stop_virtualchain(), but it only sets a
-    hint to stop indexing (so it may take a few 10s of seconds).
-
-    Return 0 on success (i.e. on exit)
-    Return 1 on failure
-    """
-
-    global running
-
-    connect_bitcoind = session.get_connect_bitcoind()
-    config_file = config.get_config_filename()
-    bitcoin_opts = config.get_bitcoind_config(config_file)
-
-    arg_bitcoin_opts, argparser = config.parse_bitcoind_args(return_parser=True)
-
-    # command-line overrides config file
-    for (k, v) in arg_bitcoin_opts.items():
-        bitcoin_opts[k] = v
-
-    log.debug("multiprocessing config = (%s, %s)" % (config.configure_multiprocessing(bitcoin_opts)))
-
-    try:
-
-        bitcoind = connect_bitcoind(bitcoin_opts)
-
-    except Exception, e:
-        log.exception(e)
-        return 1
-
-    _, last_block_id = indexer.get_index_range(bitcoind)
-
-    running = True
-    while running:
-
-        # keep refreshing the index
-        sync_virtualchain(bitcoin_opts, last_block_id, state_engine )
-
-        time.sleep(config.REINDEX_FREQUENCY)
-
-        _, last_block_id = indexer.get_index_range(bitcoind)
-
-
-def setup_virtualchain(impl=None, testset=False, bitcoind_connection_factory=None, index_worker_env=None):
+def setup_virtualchain(impl=None, bitcoind_connection_factory=None, index_worker_env=None):
     """
     Set up the virtual blockchain.
     Use the given virtual blockchain core logic.
@@ -159,17 +91,7 @@ def setup_virtualchain(impl=None, testset=False, bitcoind_connection_factory=Non
     global connect_bitcoind
 
     if impl is not None:
-        config.set_implementation(impl, testset)
-
-    if bitcoind_connection_factory is not None:
-        workpool.set_connect_bitcoind( bitcoind_connection_factory )
-
-    if index_worker_env is not None: 
-        # expect a dict
-        if type(index_worker_env) != dict:
-            raise Exception("index_worker_env must be a dictionary")
-
-        workpool.set_default_worker_env( index_worker_env )
+        config.set_implementation(impl)
 
 
 def virtualchain_set_opfields( op, **fields ):
@@ -201,11 +123,7 @@ def connect_bitcoind( opts ):
     to by the environment variable
     VIRTUALCHAIN_MOD_CONNECT_BLOCKCHAIN.
     """
-    connect_bitcoind_factory = workpool.multiprocess_connect_bitcoind()
+    # connect_bitcoind_factory = workpool.multiprocess_connect_bitcoind()
+    connect_bitcoind_factory = session.connect_bitcoind_impl
     return connect_bitcoind_factory( opts )
 
-if __name__ == '__main__':
-
-    import impl_ref
-    setup_virtualchain(impl_ref)
-    run_virtualchain()

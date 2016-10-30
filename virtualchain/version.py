@@ -21,4 +21,4 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-__version__ = '0.0.13.5'
+__version__ = '0.14.0'

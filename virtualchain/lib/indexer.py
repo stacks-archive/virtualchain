@@ -31,7 +31,6 @@ import subprocess
 import signal
 import json
 import datetime
-import traceback
 import httplib
 import ssl
 import threading
@@ -45,11 +44,11 @@ import time
 import traceback
 import cPickle as pickle
 import imp
+import simplejson
 
 from collections import defaultdict 
 
 import config
-import workpool
 import blockchain.transactions as transactions
 import blockchain.session as session
 
@@ -109,7 +108,7 @@ class StateEngine( object ):
     """
     
 
-    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, resume_offset=0, read_only=True ):
+    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, read_only=False ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -145,6 +144,10 @@ class StateEngine( object ):
         passed into each implementation method.  It is meant to preserve implementation-
         specific state--in particular, whatever state the implementation expects to be 
         present.
+
+        If @expected_snapshots is given, then this is a dict that maps block heights
+        to their expected consensus hashes.  If the calculated consensus hash does not 
+        match the expected consensus hash, the state engine aborts the program.
         """
         
         self.consensus_hashes = initial_snapshots
@@ -157,26 +160,26 @@ class StateEngine( object ):
         self.lastblock = self.impl.get_first_block_id() - 1
         self.pool = None
         self.rejected = {}
-        self.expected_snapshots = expected_snapshots.get('snapshots', {})
+        self.expected_snapshots = expected_snapshots
         self.backup_frequency = backup_frequency
         self.backup_max_age = backup_max_age
-        self.resume_offset = resume_offset
         self.read_only = read_only
 
         firsttime = True
 
         consensus_snapshots_filename = config.get_snapshots_filename(impl=impl)
         lastblock_filename = config.get_lastblock_filename(impl=impl)
-        
-        # if we crashed during a commit, try to finish
+       
+        # if we crashed during a commit, and we're openning read-write, try to finish
         if not read_only:
             rc = self.commit( startup=True )
             if not rc:
                log.error("Failed to commit partial data.  Rolling back and aborting.")
                self.rollback()
-               sys.exit(1)
+               traceback.print_stack()
+               os.abort()
 
-        # can be missing all files, or none of them 
+        # can be missing all files (i.e. this is the first time), or none of them 
         for fp in [consensus_snapshots_filename, lastblock_filename]:
             if os.path.exists( fp ):
                 # starting with existing data
@@ -184,127 +187,96 @@ class StateEngine( object ):
         
         # attempt to load the snapshots 
         if os.path.exists( consensus_snapshots_filename ):
+           log.debug("consensus snapshots at '%s'" % consensus_snapshots_filename)
+
            try:
-              
-              with open(consensus_snapshots_filename, 'r') as f:
-                 
+              with open(consensus_snapshots_filename, 'r') as f: 
                  db_dict = json.loads(f.read())
-                 
-                 if 'snapshots' in db_dict:
-                     self.consensus_hashes = db_dict['snapshots']
+                 assert 'snapshots' in db_dict
+                 self.consensus_hashes = db_dict['snapshots']
                  
            except Exception, e:
               log.error("FATAL: Failed to read consensus snapshots at '%s'. Aborting." % consensus_snapshots_filename )
               log.exception(e)
-              sys.exit(1)
+              traceback.print_stack()
+              os.abort()
             
-        elif not firsttime:
+        elif firsttime:
+
+            log.debug("consensus snapshots at '%s'" % consensus_snapshots_filename)
+            try:
+                with open( consensus_snapshots_filename, 'w') as f:
+                    f.write( json.dumps( {'snapshots': self.consensus_hashes} ) )
+                    f.flush()
+
+            except Exception, e:
+                log.error("FATAL: failed to store initial snapshots to %s. Aborting." % consensus_snapshots_filename )
+                log.exception(e)
+                traceback.print_stack()
+                os.abort()
+
+        else:
             log.error("FATAL: No such file or directory: %s" % consensus_snapshots_filename )
-            sys.exit(1)
+            traceback.print_stack()
+            os.abort()
 
         # what was the last block processed?
         if os.path.exists( lastblock_filename ):
-           self.lastblock = self.get_lastblock()
+           log.debug("lastblock at '%s'" % lastblock_filename)
+
+           self.lastblock = self.get_lastblock( lastblock_filename=lastblock_filename )
            log.debug("Lastblock: %s (%s)" % (self.lastblock, lastblock_filename))
            if self.lastblock is None:
               log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
               log.exception(e)
-              sys.exit(1)
-          
-        elif not firsttime:
-            log.error("FATAL: No such file or directory: %s" % lastblock_filename )
-            sys.exit(1)
+              traceback.print_stack()
+              os.abort()
+         
+        elif firsttime:
+            log.debug("lastblock at '%s'" % lastblock_filename)
+            try:
+                log.debug("Store lastblock %s to %s" % (self.lastblock, lastblock_filename))
+                with open(lastblock_filename, "w") as lastblock_f:
+                    lastblock_f.write("%s" % self.lastblock)
+                    lastblock_f.flush()
 
-
-    def save_num_vtxs( self, block_number, num_vtxs, impl=None ):
-        """
-        Save the number of virtual transactions present in this block.
-        Do this before processing any of them, so if we're
-        interrupted, the implementation can tell it how to
-        resume.
-        """
-
-        if impl is None:
-            impl = self.impl
-
-        num_vtxs_path = config.get_lastblock_filename(impl=impl) + ".numvtx"
-        with open(num_vtxs_path, "w") as f:
-            f.write( str(block_number) + "-" + str(num_vtxs) )
-            f.flush()
-
-
-    def get_saved_num_vtxs( self, block_number, impl=None ):
-        """
-        Get the saved number of virtual transactions in this block.
-        Return the number on success.
-        Return None if the saved .numvtx file does not correspond to the block.
-        """
-
-        if impl is None:
-            impl = self.impl
-
-        num_vtxs_path = config.get_lastblock_filename(impl=impl) + ".numvtx"
-        dat = None
-
-        if not os.path.exists( num_vtxs_path ):
-            return None 
+            except Exception, e:
+                log.error("FATAL: failed to store initial lastblock to %s.  Aborting." % lastblock_filename)
+                log.exception(e)
+                traceback.print_stack()
+                os.abort()
 
         else:
-            try:
-                with open(num_vtxs_path, "r") as f:
-                    dat = f.read().strip()
-            except:
-                log.error("Failed to load '%s'" % num_vtxs_path)
-                return None
-
-        try:
-            block_str, vtx_str = dat.split("-")
-            if int(block_str) != block_number:
-                return None 
-            else:
-                return int(vtx_str)
-
-        except:
-            # failed to parse 
-            log.error("Failed to parse '%s'" % num_vtxs_path)
-            return None
-
-    
-    def clear_num_vtxs( self, impl=None ):
-        """
-        Clear the file that stores the number of virtual transactions.
-        """
-
-        if impl is None:
-            impl = self.impl
-
-        num_vtxs_path = config.get_lastblock_filename(impl=impl) + ".numvtx"
-        try:
-            os.unlink(num_vtxs_path)
-        except:
-            pass
+            log.error("FATAL: No such file or directory: %s" % lastblock_filename )
+            traceback.print_stack()
+            os.abort()
 
 
-    def get_lastblock( self, impl=None ):
+    def get_lastblock( self, lastblock_filename=None, impl=None ):
         """
         What was the last block processed?
         Return the number on success
         Return None on failure to read
         """
 
-        if impl is None:
-            impl = self.impl
+        if lastblock_filename is None:
+            
+            if impl is None:
+                impl = self.impl
 
-        lastblock_filename = config.get_lastblock_filename(impl=impl)
+            lastblock_filename = config.get_lastblock_filename(impl=impl)
+        
         if os.path.exists( lastblock_filename ):
            try:
               with open(lastblock_filename, 'r') as f:
-                 lastblock_str = f.read()
+                 lastblock_str = f.read().strip()
                  return int(lastblock_str)
               
            except Exception, e:
               log.error("Failed to read last block number at '%s'" % lastblock_filename )
-              return None 
+              return None
+
+        return None
 
           
     def rollback( self ):
@@ -348,9 +320,21 @@ class StateEngine( object ):
             # rollback 
             log.error("Partial write detected.  Not committing.")
             return False
-            
+           
         # basic sanity checks: don't overwrite the db if the file is zero bytes, or if we can't load it
         if os.path.exists( tmp_db_filename ):
+            db_dir = os.path.dirname( tmp_db_filename )
+
+            try:
+                dirfd = os.open(db_dir, os.O_DIRECTORY)
+                os.fsync(dirfd)
+                os.close( dirfd )
+            except Exception, e:
+                log.exception(e)
+                log.error("FATAL: failed to sync directory %s" % db_dir)
+                traceback.print_stack()
+                os.abort()
+
             sb = os.stat( tmp_db_filename )
             if sb.st_size == 0:
                 log.error("Partial write detected: tried to overwrite with zero-sized db!  Will rollback.")
@@ -369,13 +353,29 @@ class StateEngine( object ):
 
         
         backup_time = int(time.time() * 1000000)
+       
+        listing = []
+        listing.append( ("lastblock", tmp_lastblock_filename, config.get_lastblock_filename(impl=self.impl)) )
+        listing.append( ("snapshots", tmp_snapshot_filename, config.get_snapshots_filename(impl=self.impl)) )
+        listing.append( ("db", tmp_db_filename, config.get_db_filename(impl=self.impl)) )
 
-        for file_type, tmp_filename, filename in zip( ["lastblock", "snapshots", "db"], \
-                                                      [tmp_lastblock_filename, tmp_snapshot_filename, tmp_db_filename], \
-                                                      [config.get_lastblock_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_db_filename(impl=self.impl)] ):
-               
+        for i in xrange(0, len(listing)):
+            file_type, tmp_filename, filename = listing[i]
+            
+            dir_path = os.path.dirname( tmp_filename )
+            dirfd = None
+            try:
+                dirfd = os.open(dir_path, os.O_DIRECTORY)
+                os.fsync(dirfd)
+            except Exception, e:
+                log.exception(e)
+                log.error("FATAL: failed to sync directory %s" % dir_path)
+                traceback.print_stack()
+                os.abort()
+
             if not os.path.exists( tmp_filename ):
                 # no new state written
+                os.close( dirfd )
                 continue  
 
             # commit our new lastblock, consensus hash set, and state engine data
@@ -385,19 +385,26 @@ class StateEngine( object ):
                if sys.platform == 'win32' and os.path.exists( filename ):
                    log.debug("Clear old '%s' %s" % (file_type, filename))
                    os.unlink( filename )
+                   os.fsync( dirfd )
 
                if not backup:
                    log.debug("Rename '%s': %s --> %s" % (file_type, tmp_filename, filename))
                    os.rename( tmp_filename, filename )
+                   os.fsync( dirfd )
+
                else:
                    log.debug("Rename and back up '%s': %s --> %s" % (file_type, tmp_filename, filename))
                    shutil.copy( tmp_filename, tmp_filename + (".%s" % backup_time))
                    os.rename( tmp_filename, filename )
+                   os.fsync( dirfd )
                   
             except Exception, e:
                log.exception(e)
                log.error("Failed to rename '%s' to '%s'" % (tmp_filename, filename))
+               os.close( dirfd )
                return False 
+
+            os.close( dirfd )
            
         return True
        
@@ -495,7 +502,8 @@ class StateEngine( object ):
                     except Exception, e:
                         log.exception(e)
                         log.error("FATAL: failed to make backup directory '%s'" % backup_dir)
-                        sys.exit(1)
+                        traceback.print_stack()
+                        os.abort()
                         
 
                 for p in [config.get_db_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_lastblock_filename(impl=self.impl)]:
@@ -512,11 +520,10 @@ class StateEngine( object ):
                         except Exception, e:
                             log.exception(e)
                             log.error("FATAL: failed to back up '%s'" % p)
-                            sys.exit(1)
+                            traceback.print_stack()
+                            os.abort()
 
         return
-
-
 
 
     def clear_old_backups( self, block_id ):
@@ -567,20 +574,25 @@ class StateEngine( object ):
     def save( self, block_id, consensus_hash, pending_ops, backup=False ):
         """
         Write out all state to the working directory.
-        Calls the implementation's 'db_save' method.
+        Calls the implementation's 'db_save' method to store any state for this block.
+        Calls the implementation's 'db_continue' method at the very end, to signal
+        to the implementation that all virtualchain state has been saved.  This method
+        can return False, in which case, indexing stops
         
         Return True on success 
-        Return False on error
-        Raise exception if block_id represents a block 
-         we've already processed.
+        Return False if the implementation wants to exit.
+        Aborts on fatal error
         """
-       
+        
         if self.read_only:
-           log.error("FATAL: read-only")
-           os.abort()
+            log.error("FATAL: read only")
+            traceback.print_stack()
+            os.abort()
 
         if block_id < self.lastblock:
-           raise Exception("Already processed up to block %s (got %s)" % (self.lastblock, block_id))
+            log.error("FATAL: Already processed up to block %s (got %s)" % (self.lastblock, block_id))
+            traceback.print_stack()
+            os.abort()
 
         # stage data to temporary files
         tmp_db_filename = (config.get_db_filename(impl=self.impl) + ".tmp")
@@ -595,7 +607,6 @@ class StateEngine( object ):
                 f.write(json.dumps(db_dict))
                 f.flush()
             
-            # put this last...
             with open(tmp_lastblock_filename, "w") as lastblock_f:
                 lastblock_f.write("%s" % block_id)
                 lastblock_f.flush()
@@ -603,8 +614,8 @@ class StateEngine( object ):
         except:
             # failure to save is fatal 
             log.error("FATAL: Could not stage data for block %s" % block_id)
-            sys.exit(1)
-            return False
+            traceback.print_stack()
+            os.abort()
 
         rc = self.impl.db_save( block_id, consensus_hash, pending_ops, tmp_db_filename, db_state=self.state )
         if not rc:
@@ -622,16 +633,16 @@ class StateEngine( object ):
             except:
                 pass 
             
-            sys.exit(1)
-            return False
+            traceback.print_stack()
+            os.abort()
        
         rc = self.commit( backup=backup )
         if not rc:
             log.error("Failed to commit data at block %s.  Rolling back and aborting." % block_id )
             
             self.rollback()
-            sys.exit(1)
-            return False 
+            traceback.print_stack()
+            os.abort()
         
         else:
             self.lastblock = block_id
@@ -641,9 +652,18 @@ class StateEngine( object ):
 
             # clear out old backups
             self.clear_old_backups( block_id )
+   
+        continue_indexing = True
+        if hasattr(self.impl, "db_continue"):
+            try:
+                continue_indexing = self.impl.db_continue( block_id, consensus_hash )
+            except Exception, e:
+                traceback.print_stack()
+                log.error("FATAL: implementation failed db_continue")
+                os.abort()
 
-            return True
-    
+        return continue_indexing
+
    
     @classmethod
     def calculate_consensus_hash( self, merkle_root ):
@@ -739,7 +759,7 @@ class StateEngine( object ):
            all_values.append( str(len(str(field_value))) + ":" + str(field_value) )
 
         if len(missing) > 0:
-           log.error("Missing fields; dump follows:\n%s" % json.dumps( opdata, indent=4, sort_keys=True ))
+           log.error("Missing fields; dump follows:\n%s" % simplejson.dumps( opdata, indent=4, sort_keys=True ))
            raise Exception("BUG: missing fields '%s'" % (",".join(missing)))
 
         if verbose:
@@ -798,7 +818,8 @@ class StateEngine( object ):
 
             if prev_ch is None:
                 log.error("BUG: None consensus for %s" % prev_block )
-                sys.exit(1)
+                traceback.print_stack()
+                os.abort()
 
             previous_consensus_hashes.append( prev_ch )
             i += 1
@@ -1026,10 +1047,10 @@ class StateEngine( object ):
         return new_ops
     
     
-    def process_block( self, block_id, ops, backup=False ):
+    def process_block( self, block_id, ops, backup=False, expected_snapshots=None ):
         """
         Top-level block processing method.
-        Feed the block and its OP_RETURN transactions 
+        Feed the block and its data transactions 
         through the implementation, to build up the 
         implementation's state.  Cache the 
         resulting data to disk.
@@ -1039,21 +1060,20 @@ class StateEngine( object ):
         """
         
         log.debug("Process block %s (%s virtual transactions)" % (block_id, len(ops)))
+
+        if expected_snapshots is None:
+            expected_snapshots = self.expected_snapshots
         
-        self.save_num_vtxs( block_id, len(ops) )
-
-        if self.resume_offset > 0:
-            log.debug("Resuming from %s" % self.resume_offset)
-            ops = ops[self.resume_offset:]
-
         new_ops = self.process_ops( block_id, ops )
-
-        self.clear_num_vtxs()
-        self.resume_offset = 0
-
         sanitized_ops = {}  # for save()
 
         consensus_hash = self.snapshot( block_id, new_ops['virtualchain_ordered'] )
+
+        # sanity check 
+        if expected_snapshots.has_key(block_id) and expected_snapshots[block_id] != consensus_hash:
+            log.error("FATAL: consensus hash mismatch at height %s: %s != %s" % (block_id, expected_snapshots[block_id], consensus_hash))
+            traceback.print_stack()
+            os.abort()
 
         for op in new_ops.keys():
 
@@ -1065,68 +1085,15 @@ class StateEngine( object ):
 
         rc = self.save( block_id, consensus_hash, sanitized_ops, backup=backup )
         if not rc:
-            # failure to save is fatal
-            log.error("FATAL: Failed to save (%s, %s): rc = %s" % (block_id, consensus_hash, rc))
-            sys.exit(1)
-            return None 
-        
+            # implementation requests early termination 
+            log.debug("Early indexing termination at %s" % block_id)
+            return None
+
         return consensus_hash
 
 
-    @classmethod 
-    def workpool_worker_startup( cls, s ):
-        """
-        Initialize a worker indexer
-        """
-        s.free_indexer_memory()
-
-
-    def start_workpool( self, bitcoind_opts ):
-        """
-        Make a work pool for ourselves.
-        Raise an exception if one already exists.
-        NOT THREAD SAFE
-        """
-        if self.pool is not None:
-            raise Exception("Already indexing")
-
-        self.pool = workpool.multiprocess_pool( bitcoind_opts, os.path.abspath( __file__ ) )
-        return True
-
-
-    def stop_workpool(self):
-        """
-        Make sure our workpool is stopped.
-        NOT THREAD SAFE
-        """
-        if self.pool is None:
-            return True 
-
-        self.pool.close()
-        self.pool.terminate()
-        rc = self.pool.join(timeout=5.0)
-        if not rc:
-            # some stragglers 
-            log.debug("Killing workpool stragglers")
-            self.pool.kill()
-            rc = self.pool.join(timeout=5.0)
-            if not rc:
-                log.error("FATAL: failed to join workpool")
-                sys.exit(1)
-
-        self.pool = None
-        return True
-
-     
-    def get_workpool(self):
-        """
-        Get our workpool
-        """
-        return self.pool
-
-
     @classmethod
-    def build( cls, bitcoind_opts, end_block_id, state_engine ):
+    def build( cls, bitcoind_opts, end_block_id, state_engine, expected_snapshots={}, tx_filter=None ):
         """
         Top-level call to process all blocks in the blockchain.
         Goes and fetches all OP_RETURN nulldata in order,
@@ -1137,101 +1104,68 @@ class StateEngine( object ):
         Note that this method can take some time (hours, days) to complete 
         when called from the first block.
         
-        This method is *NOT* thread-safe.  However, it can be interrupted 
-        with the "stop_build" method.
-        
         Return True on success 
         Return False on error
         Raise an exception on recoverable error--the caller should simply try again.
         Exit on irrecoverable error--do not try to make forward progress
         """
-        
+       
         first_block_id = state_engine.lastblock + 1
         if first_block_id >= end_block_id:
             # built 
             log.debug("Up-to-date (%s >= %s)" % (first_block_id, end_block_id))
             return True 
 
-        num_workers, worker_batch_size = config.configure_multiprocessing( bitcoind_opts )
-
         rc = True
+        batch_size = config.BLOCK_BATCH_SIZE
 
-        state_engine.start_workpool( bitcoind_opts )
+        log.debug("Sync virtualchain state from %s to %s" % (first_block_id, end_block_id) )
         
-        try:
+        for block_id in xrange( first_block_id, end_block_id+1, batch_size ):
             
-            log.debug("Process blocks %s to %s" % (first_block_id, end_block_id) )
-            
-            for block_id in xrange( first_block_id, end_block_id, worker_batch_size * num_workers ):
+            if not rc:
+                break 
+           
+            last_block_id = min(block_id + batch_size, end_block_id)
+            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, spv_last_block=end_block_id - 1, tx_filter=tx_filter )
+            if block_ids_and_txs is None:
+                raise Exception("Failed to get virtual transactions %s to %s" % (block_id, last_block_id))
+
+            # process in order by block ID
+            block_ids_and_txs.sort()
+           
+            for processed_block_id, txs in block_ids_and_txs:
+
+                if state_engine.get_consensus_at( processed_block_id ) is not None:
+                    raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
+
+                ops = state_engine.parse_block( processed_block_id, txs )
+                consensus_hash = state_engine.process_block( processed_block_id, ops, expected_snapshots=expected_snapshots )
                 
-                if not rc:
-                    break 
-                
-                if state_engine.get_workpool() is None:
-                    # interrupted 
-                    log.debug("Build interrupted")
+                if consensus_hash is None:
+                    # request to stop
                     rc = False
-                    break 
-                
-                block_ids = range( block_id, min(block_id + worker_batch_size * num_workers, end_block_id) )
-               
-                # returns: [(block_id, txs)]
-                block_ids_and_txs = transactions.get_nulldata_txs_in_blocks( state_engine.get_workpool(), bitcoind_opts, block_ids )
-                
-                # process in order by block ID
-                block_ids_and_txs.sort()
-               
-                for processed_block_id, txs in block_ids_and_txs:
+                    log.debug("Stopped processing at block %s" % processed_block_id)
+                    break
 
-                    if state_engine.get_consensus_at( processed_block_id ) is not None:
-                        raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
+                log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
 
-                    ops = state_engine.parse_block( processed_block_id, txs )
-                    consensus_hash = state_engine.process_block( processed_block_id, ops )
-                    
-                    log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
-                    
-                    if consensus_hash is None:
-                        
-                        # failure to save is a fatal error 
+                # sanity check, if given 
+                expected_consensus_hash = state_engine.get_expected_consensus_at( processed_block_id )
+                if expected_consensus_hash is not None:
+                    if str(consensus_hash) != str(expected_consensus_hash):
                         rc = False
-                        log.error("FATAL: Failed to process block %d" % processed_block_id )
-                        sys.exit(1)
-                        break
-
-                    # sanity check, if given 
-                    expected_consensus_hash = state_engine.get_expected_consensus_at( processed_block_id )
-                    if expected_consensus_hash is not None:
-                        if str(consensus_hash) != str(expected_consensus_hash):
-                            rc = False
-                            log.error("FATAL: DIVERGENCE DETECTED AT %s: %s != %s" % (processed_block_id, consensus_hash, expected_consensus_hash))
-                            sys.exit(1)
-                            break
-            
-            log.debug("Last block is %s" % state_engine.lastblock )
-
-        except:
-            
-            state_engine.stop_workpool()
-            raise
+                        log.error("FATAL: DIVERGENCE DETECTED AT %s: %s != %s" % (processed_block_id, consensus_hash, expected_consensus_hash))
+                        traceback.print_stack()
+                        os.abort()
        
-        state_engine.stop_workpool()
+            if not rc:
+                break
+        
+        log.debug("Last block is %s" % state_engine.lastblock )
         return rc
     
-    
-    def stop_build( self ):
-        """
-        Stop an in-progress build() invocation.
-        Call from a separate thread from build()
-        
-        If the build() method is not concurrently running,
-        this method will do nothing.
-        """
-        
-        log.debug("%s: Stop building" % os.getpid())
-        self.stop_workpool()
-      
-
+   
     def get_consensus_at( self, block_id ):
         """
         Get the consensus hash at a given block
@@ -1314,7 +1248,7 @@ def get_index_range( bitcoind ):
     """
     Get the range of block numbers that we need to fetch from the blockchain.
     
-    Return None if we fail to connect to bitcoind.
+    Return None, None if we fail to connect to bitcoind.
     """
 
     start_block = config.get_first_block_id()
@@ -1323,7 +1257,7 @@ def get_index_range( bitcoind ):
        current_block = int(bitcoind.getblockcount())
         
     except Exception, e:
-       log.error(e)
+       log.exception(e)
        return None, None
 
     # check our last known file
@@ -1353,28 +1287,4 @@ def get_index_range( bitcoind ):
         start_block = saved_block + 1
 
     return start_block, current_block
-
-
-def indexer_main_loop_body( key, payload ):
-    """
-    Worker main loop: parse a blockchain RPC
-    call and dispatch it.
-    """
-    method_name, method_args = workpool.multiprocess_rpc_unmarshal( payload )
-
-    if len(method_args) == 0:
-       log.error("No method given")
-       return {"error": "No method given"}
-
-    result = transactions.indexer_rpc_dispatch( method_name, method_args )
-
-    workpool.Workpool.worker_post_message( key, pickle.dumps( result ) )
-
-
-# Entry point for workers 
-# (this file serves as the program to run, if running as a worker)
-if __name__ == "__main__":
-
-    log.debug("Worker %s starting" % (os.getpid()))
-    workpool.multiprocess_worker_main( indexer_main_loop_body )
 

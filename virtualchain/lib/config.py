@@ -30,15 +30,14 @@ DEBUG = False
 if os.environ.get("BLOCKSTACK_DEBUG") == "1":
     DEBUG = True
 
-TESTSET = False
-IMPL = None             # class, package, or instance that implements the virtual chain state
+IMPL = None             # class, package, or instance that implements the virtual chain state engine
 
 """ virtualchain daemon configs
 """
 
 RPC_TIMEOUT = 5  # seconds
 
-MULTIPROCESS_RPC_RETRY = 10
+BLOCK_BATCH_SIZE = 10
 
 REINDEX_FREQUENCY = 10  # in seconds
 
@@ -100,7 +99,7 @@ def get_working_dir(impl=None):
         working_dir = impl.working_dir
 
     else:
-        working_dir = os.path.join(home, "." + impl.get_virtual_chain_name(testset=TESTSET))
+        working_dir = os.path.join(home, "." + impl.get_virtual_chain_name())
 
     if not os.path.exists(working_dir):
         os.makedirs(working_dir)
@@ -115,7 +114,7 @@ def get_config_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    config_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".ini"
+    config_filename = impl.get_virtual_chain_name() + ".ini"
 
     return os.path.join(working_dir, config_filename)
 
@@ -127,7 +126,7 @@ def get_db_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    lastblock_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".db"
+    lastblock_filename = impl.get_virtual_chain_name() + ".db"
 
     return os.path.join(working_dir, lastblock_filename)
 
@@ -139,7 +138,7 @@ def get_lastblock_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    lastblock_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".lastblock"
+    lastblock_filename = impl.get_virtual_chain_name() + ".lastblock"
 
     return os.path.join(working_dir, lastblock_filename)
 
@@ -151,36 +150,9 @@ def get_snapshots_filename(impl=None):
     impl = get_impl(impl)
 
     working_dir = get_working_dir(impl=impl)
-    snapshots_filename = impl.get_virtual_chain_name(testset=TESTSET) + ".snapshots"
+    snapshots_filename = impl.get_virtual_chain_name() + ".snapshots"
 
     return os.path.join(working_dir, snapshots_filename)
-
-
-def configure_multiprocessing(bitcoind_opts, impl=None):
-    """
-    Given the set of bitcoind options (i.e. the location of the bitcoind server),
-    come up with some good multiprocessing parameters.
-
-    Return (number of processes, number of blocks per process)
-    Return (None, None) if we could make no inferences from the bitcoind opts.
-    """
-
-    if bitcoind_opts is None:
-        return (None, None)
-
-    if bitcoind_opts.has_key("multiprocessing_num_procs") and bitcoind_opts.has_key("multiprocessing_num_blocks"):
-        return bitcoind_opts["multiprocessing_num_procs"], bitcoind_opts["multiprocessing_num_blocks"]
-
-    if bitcoind_opts.get("bitcoind_server", None) is None:
-        return (None, None)
-
-    if bitcoind_opts["bitcoind_server"] in ["localhost", "127.0.0.1", "::1"]:
-        # running locally
-        return (1, 10)
-
-    else:
-        # running remotely
-        return (10, 1)
 
 
 def get_bitcoind_config(config_file=None, impl=None):
@@ -195,10 +167,12 @@ def get_bitcoind_config(config_file=None, impl=None):
     bitcoind_port = None
     bitcoind_user = None
     bitcoind_passwd = None
-    bitcoind_use_https = None
     bitcoind_timeout = None
-    bitcoind_mock = None
-    bitcoind_mock_save_file = None
+    bitcoind_regtest = None
+    bitcoind_p2p_port = None
+    bitcoind_spv_path = None
+
+    regtest = None
 
     if config_file is not None:
 
@@ -213,60 +187,53 @@ def get_bitcoind_config(config_file=None, impl=None):
             if parser.has_option('bitcoind', 'port'):
                 bitcoind_port = int(parser.get('bitcoind', 'port'))
 
+            if parser.has_option('bitcoind', 'p2p_port'):
+                bitcoind_p2p_port = int(parser.get('bitcoind', 'p2p_port'))
+
             if parser.has_option('bitcoind', 'user'):
                 bitcoind_user = parser.get('bitcoind', 'user')
 
             if parser.has_option('bitcoind', 'passwd'):
                 bitcoind_passwd = parser.get('bitcoind', 'passwd')
 
-            if parser.has_option('bitcoind', 'use_https'):
-                use_https = parser.get('bitcoind', 'use_https')
-            else:
-                use_https = 'no'
+            if parser.has_option('bitcoind', 'spv_path'):
+                bitcoind_spv_path = parser.get('bitcoind', 'spv_path')
 
-            if parser.has_option("bitcoind", "save_file"):
-                bitcoind_mock_save_file = parser.get("bitcoind", "save_file")
-
-            if parser.has_option('bitcoind', 'mock'):
-                mock = parser.get('bitcoind', 'mock')
+            if parser.has_option('bitcoind', 'regtest'):
+                regtest = parser.get('bitcoind', 'regtest')
             else:
-                mock = 'no'
+                regtest = 'no'
 
             if parser.has_option('bitcoind', 'timeout'):
                 bitcoind_timeout = float(parser.get('bitcoind', 'timeout'))
 
-            if use_https.lower() in ["yes", "y", "true", "1", "on"]:
-                bitcoind_use_https = True
+            if regtest.lower() in ["yes", "y", "true", "1", "on"]:
+                bitcoind_regtest = True
             else:
-                bitcoind_use_https = False
-
-            if mock.lower() in ["yes", "y", "true", "1", "on"]:
-                bitcoind_mock = True
-            else:
-                bitcoind_mock = False
+                bitcoind_regtest = False
             
             loaded = True
 
     if not loaded:
 
         bitcoind_server = 'bitcoin.blockstack.com'
-        bitcoind_port = '8332'
+        bitcoind_port = 8332
         bitcoind_user = 'blockstack'
         bitcoind_passwd = 'blockstacksystem'
-        bitcoind_use_https = False
-        bitcoind_mock = False
+        bitcoind_regtest = False
         bitcoind_timeout = 300
-        bitcoind_mock_save_file = None
+        bitcoind_p2p_port = 8333
+        bitcoind_spv_path = os.path.expanduser("~/.virtualchain-spv-headers.dat")
 
     default_bitcoin_opts = {
         "bitcoind_user": bitcoind_user,
         "bitcoind_passwd": bitcoind_passwd,
         "bitcoind_server": bitcoind_server,
         "bitcoind_port": bitcoind_port,
-        "bitcoind_use_https": bitcoind_use_https,
         "bitcoind_timeout": bitcoind_timeout,
-        "bitcoind_mock": bitcoind_mock,
-        "bitcoind_mock_save_file": bitcoind_mock_save_file
+        "bitcoind_regtest": bitcoind_regtest,
+        "bitcoind_p2p_port": bitcoind_p2p_port,
+        "bitcoind_spv_path": bitcoind_spv_path
     }
 
     return default_bitcoin_opts
@@ -283,7 +250,7 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
     opts = {}
 
     if parser is None:
-        parser = argparse.ArgumentParser(description='%s version %s' % (impl.get_virtual_chain_name(testset=TESTSET), impl.get_virtual_chain_version()))
+        parser = argparse.ArgumentParser(description='%s version %s' % (impl.get_virtual_chain_name(), impl.get_virtual_chain_version()))
 
     parser.add_argument(
           '--bitcoind-server',
@@ -292,14 +259,17 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
           '--bitcoind-port', type=int,
           help='the bitcoind RPC port to connect to')
     parser.add_argument(
+          '--bitcoind-p2p-port', type=int,
+          help='the bitcoind P2P port to connect to')
+    parser.add_argument(
           '--bitcoind-user',
           help='the username for bitcoind RPC server')
     parser.add_argument(
           '--bitcoind-passwd',
           help='the password for bitcoind RPC server')
     parser.add_argument(
-          "--bitcoind-use-https", action='store_true',
-          help='use HTTPS to connect to bitcoind')
+          '--bitciond-spv-path',
+          help='the path to store the SPV headers')
     parser.add_argument(
           "--bitcoind-timeout", type=int,
           help='the number of seconds to wait before timing out a request')
@@ -307,20 +277,14 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
     args, _ = parser.parse_known_args()
 
     # propagate options
-    for (argname, config_name) in zip(["bitcoind_server", "bitcoind_port", "bitcoind_user", "bitcoind_passwd", "bitcoind_timeout"], \
-                                      ["BITCOIND_SERVER", "BITCOIND_PORT", "BITCOIND_USER", "BITCOIND_PASSWD", "BITCOIND_TIMEOUT"]):
+    for (argname, config_name) in zip(["bitcoind_server", "bitcoind_port", "bitcoind_p2p_port", "bitcoind_user", "bitcoind_passwd", "bitcoind_timeout", "bitcoind_spv_path"], \
+                                      ["BITCOIND_SERVER", "BITCOIND_PORT", "BITCOIND_P2P_PORT", "BITCOIND_USER", "BITCOIND_PASSWD", "BITCOIND_TIMEOUT", "BITCOIND_SPV_PATH"]):
 
         if hasattr(args, argname) and getattr(args, argname) is not None:
 
             opts[argname] = getattr(args, argname)
             setattr(config, config_name, getattr(args, argname))
-
-    if args.bitcoind_use_https:
-        opts['bitcoind_use_https'] = True
-
-    else:
-        opts['bitcoind_use_https'] = False
-
+    
     if return_parser:
         return opts, parser
     else:
@@ -335,14 +299,12 @@ def get_implementation():
     return IMPL
 
 
-def set_implementation(impl, testset):
+def set_implementation(impl):
     """
     Set the package, class, or bundle of methods
     that implements the virtual chain's core logic.
     This method must be called before anything else.
     """
-    global TESTSET
     global IMPL
 
     IMPL = impl
-    TESTSET = testset

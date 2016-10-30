@@ -37,9 +37,11 @@ import ssl
 import threading
 import time
 import socket
-from bitcoinrpc.authproxy import AuthServiceProxy
+from .bitcoin_blockchain import AuthServiceProxy
 from utilitybelt import is_valid_int
 from ConfigParser import SafeConfigParser
+
+import bitcoin
 
 try:
    from ..config import DEBUG
@@ -78,7 +80,7 @@ def get_logger(name=None):
     log.setLevel( level )
     console = logging.StreamHandler()
     console.setLevel( level )
-    log_format = ('[%(asctime)s] [%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + ') %(message)s' if DEBUG else '%(message)s')
+    log_format = ('[%(asctime)s] [%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + '.%(thread)d) %(message)s' if DEBUG else '%(message)s')
     formatter = logging.Formatter( log_format )
     console.setFormatter(formatter)
     log.propagate = False
@@ -175,8 +177,29 @@ def connect_bitcoind_impl( bitcoind_opts ):
     """
     Create a connection to bitcoind, using a dict of config options.
     """
+
+    if 'bitcoind_port' in bitcoind_opts.keys() and bitcoind_opts['bitcoind_port'] is None:
+        log.error("No port given")
+        raise ValueError("No RPC port given (bitcoind_port)")
+
+    if 'bitcoind_timeout' in bitcoind_opts.keys() and bitcoind_opts['bitcoind_timeout'] is None:
+        # default
+        bitcoind_opts['bitcoind_timeout'] = 300
+
+    try:
+        int(bitcoind_opts['bitcoind_port'])
+    except:
+        log.error("Not an int: '%s'" % bitcoind_opts.get('bitcoind_port'))
+        raise
+
+    try:
+        float(bitcoind_opts.get('bitcoind_timeout', 300))
+    except:
+        log.error("Not a float: '%s'" % bitcoind_opts.get('bitcoind_timeout', 300))
+        raise
+
     return create_bitcoind_connection( bitcoind_opts['bitcoind_user'], bitcoind_opts['bitcoind_passwd'], \
                                        bitcoind_opts['bitcoind_server'], int(bitcoind_opts['bitcoind_port']), \
-                                       bitcoind_opts['bitcoind_use_https'], float(bitcoind_opts.get('bitcoind_timeout', 300)) )
+                                       bitcoind_opts.get('bitcoind_use_https', False), float(bitcoind_opts.get('bitcoind_timeout', 300)) )
  
 

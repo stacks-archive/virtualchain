@@ -25,9 +25,11 @@
 import config 
 import blockchain 
 import indexer 
-import workpool 
 
 from config import *
 from blockchain import *
+from blockchain.bitcoin_blockchain import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte, \
+        multisig_version_byte, make_multisig_info, parse_multisig_redeemscript, parse_multisig_scriptsig, hex_hash160_to_address, \
+        AuthServiceProxy, make_payment_script
+
 from indexer import StateEngine, get_index_range, RESERVED_KEYS
-from workpool import multiprocess_bitcoind, multiprocess_batch_size, multiprocess_pool
