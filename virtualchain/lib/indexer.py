@@ -611,8 +611,9 @@ class StateEngine( object ):
                 lastblock_f.write("%s" % block_id)
                 lastblock_f.flush()
 
-        except:
+        except Exception, e:
             # failure to save is fatal 
+            log.exception(e)
             log.error("FATAL: Could not stage data for block %s" % block_id)
             traceback.print_stack()
             os.abort()
@@ -658,6 +659,7 @@ class StateEngine( object ):
             try:
                 continue_indexing = self.impl.db_continue( block_id, consensus_hash )
             except Exception, e:
+                log.exception(e)
                 traceback.print_stack()
                 log.error("FATAL: implementation failed db_continue")
                 os.abort()
