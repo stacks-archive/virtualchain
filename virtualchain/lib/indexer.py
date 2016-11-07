@@ -424,6 +424,9 @@ class StateEngine( object ):
         """
         ret = []
         backup_dir = os.path.join( config.get_working_dir(impl=impl), "backups" )
+        if not os.path.exists(backup_dir):
+            return []
+
         for name in os.listdir( backup_dir ):
             if ".bak." not in name:
                 continue 
