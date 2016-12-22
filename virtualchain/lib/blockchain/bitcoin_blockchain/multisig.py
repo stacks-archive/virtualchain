@@ -44,11 +44,11 @@ def make_multisig_info( m, pks ):
     privkeys = []
     for pk in pks:
         priv = BitcoinPrivateKey(pk)
-        priv_wif = priv.to_wif()
-        pub = priv.public_key().to_hex()
+        priv_hex = priv.to_hex()
+        pub_hex = priv.public_key().to_hex()
 
-        privkeys.append(priv_wif)
-        pubs.append(pub)
+        privkeys.append(priv_hex)
+        pubs.append(pub_hex)
 
     script = bitcoin.mk_multisig_script( pubs, m )
     addr = bitcoin.p2sh_scriptaddr(script, multisig_version_byte)
