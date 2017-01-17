@@ -199,7 +199,7 @@ class BlockHeaderClient( BitcoinBasicClient ):
         if VERSION_BYTE == 0:
             self.coin = "bitcoin"
         else:
-            self.coin = "bitcoin_testnet"
+            self.coin = "bitcoin_testnet3"
 
         super(BlockHeaderClient, self).__init__(socket)
         self.path = headers_path
