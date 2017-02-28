@@ -81,10 +81,13 @@ def get_first_block_id(impl=None):
     return impl.get_first_block_id()
 
 
-def get_working_dir(impl=None):
+def get_working_dir(impl=None, working_dir=None):
     """
     Get the absolute path to the working directory.
     """
+
+    if working_dir:
+        return working_dir
 
     if os.environ.has_key("VIRTUALCHAIN_WORKING_DIR"):
         return os.environ["VIRTUALCHAIN_WORKING_DIR"]
@@ -107,49 +110,49 @@ def get_working_dir(impl=None):
     return working_dir
 
 
-def get_config_filename(impl=None):
+def get_config_filename(impl=None, working_dir=None):
     """
     Get the absolute path to the config file.
     """
     impl = get_impl(impl)
 
-    working_dir = get_working_dir(impl=impl)
+    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
     config_filename = impl.get_virtual_chain_name() + ".ini"
 
     return os.path.join(working_dir, config_filename)
 
 
-def get_db_filename(impl=None):
+def get_db_filename(impl=None, working_dir=None):
     """
     Get the absolute path to the last-block file.
     """
     impl = get_impl(impl)
 
-    working_dir = get_working_dir(impl=impl)
+    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
     lastblock_filename = impl.get_virtual_chain_name() + ".db"
 
     return os.path.join(working_dir, lastblock_filename)
 
 
-def get_lastblock_filename(impl=None):
+def get_lastblock_filename(impl=None, working_dir=None):
     """
     Get the absolute path to the last-block file.
     """
     impl = get_impl(impl)
 
-    working_dir = get_working_dir(impl=impl)
+    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
     lastblock_filename = impl.get_virtual_chain_name() + ".lastblock"
 
     return os.path.join(working_dir, lastblock_filename)
 
 
-def get_snapshots_filename(impl=None):
+def get_snapshots_filename(impl=None, working_dir=None):
     """
     Get the absolute path to the chain's consensus snapshots file.
     """
     impl = get_impl(impl)
 
-    working_dir = get_working_dir(impl=impl)
+    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
     snapshots_filename = impl.get_virtual_chain_name() + ".snapshots"
 
     return os.path.join(working_dir, snapshots_filename)
