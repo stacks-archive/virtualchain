@@ -252,7 +252,7 @@ class StateEngine( object ):
             os.abort()
 
 
-    def get_lastblock( self, lastblock_filename=None, impl=None ):
+    def get_lastblock( self, lastblock_filename=None, impl=None, working_dir=None ):
         """
         What was the last block processed?
         Return the number on success
@@ -264,7 +264,7 @@ class StateEngine( object ):
             if impl is None:
                 impl = self.impl
 
-            lastblock_filename = config.get_lastblock_filename(impl=impl)
+            lastblock_filename = config.get_lastblock_filename(impl=impl, working_dir=working_dir)
         
         if os.path.exists( lastblock_filename ):
            try:
@@ -418,12 +418,12 @@ class StateEngine( object ):
 
 
     @classmethod 
-    def get_backup_blocks( cls, impl ):
+    def get_backup_blocks( cls, impl, working_dir=None ):
         """
         Get the set of block IDs that were backed up
         """
         ret = []
-        backup_dir = os.path.join( config.get_working_dir(impl=impl), "backups" )
+        backup_dir = os.path.join( config.get_working_dir(impl=impl, working_dir=working_dir), "backups" )
         if not os.path.exists(backup_dir):
             return []
 
@@ -438,7 +438,7 @@ class StateEngine( object ):
                 continue 
 
             # must exist...
-            backup_paths = cls.get_backup_paths( block_id, impl )
+            backup_paths = cls.get_backup_paths( block_id, impl, working_dir=working_dir )
             for p in backup_paths:
                 if not os.path.exists(p):
                     # doesn't exist
@@ -453,13 +453,13 @@ class StateEngine( object ):
 
         
     @classmethod
-    def get_backup_paths( cls, block_id, impl ):
+    def get_backup_paths( cls, block_id, impl, working_dir=None ):
         """
         Get the set of backup paths, given the virtualchain implementation module and block number
         """
-        backup_dir = os.path.join( config.get_working_dir(impl=impl), "backups" )
+        backup_dir = os.path.join( config.get_working_dir(impl=impl, working_dir=working_dir), "backups" )
         backup_paths = []
-        for p in [config.get_db_filename(impl=impl), config.get_snapshots_filename(impl=impl), config.get_lastblock_filename(impl=impl)]:
+        for p in [config.get_db_filename(impl=impl, working_dir=working_dir), config.get_snapshots_filename(impl=impl, working_dir=working_dir), config.get_lastblock_filename(impl=impl, working_dir=working_dir)]:
             pbase = os.path.basename(p)
             backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % block_id))
             backup_paths.append( backup_path )
@@ -468,16 +468,16 @@ class StateEngine( object ):
 
 
     @classmethod
-    def backup_restore( cls, block_id, impl ):
+    def backup_restore( cls, block_id, impl, working_dir=None ):
         """
         Restore from a backup, given the virutalchain implementation module and block number
         """
-        backup_dir = os.path.join( config.get_working_dir(impl=impl), "backups" )
-        backup_paths = cls.get_backup_paths( block_id, impl )
+        backup_dir = os.path.join( config.get_working_dir(impl=impl, working_dir=working_dir), "backups" )
+        backup_paths = cls.get_backup_paths( block_id, impl, working_dir=working_dir )
         for p in backup_paths:
             assert os.path.exists( p ), "No such backup file: %s" % backup_paths
 
-        for p in [config.get_db_filename(impl=impl), config.get_snapshots_filename(impl=impl), config.get_lastblock_filename(impl=impl)]:
+        for p in [config.get_db_filename(impl=impl, working_dir=working_dir), config.get_snapshots_filename(impl=impl, working_dir=working_dir), config.get_lastblock_filename(impl=impl, working_dir=working_dir)]:
             pbase = os.path.basename(p)
             backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % block_id))
             log.debug("Restoring '%s' to '%s'" % (backup_path, p))
@@ -486,7 +486,7 @@ class StateEngine( object ):
         return True
 
 
-    def make_backups( self, block_id ):
+    def make_backups( self, block_id, working_dir=None ):
         """
         If we're doing backups on a regular basis, then 
         carry them out here if it is time to do so.
@@ -498,7 +498,7 @@ class StateEngine( object ):
         if self.backup_frequency is not None:
             if (block_id % self.backup_frequency) == 0:
 
-                backup_dir = os.path.join( config.get_working_dir(impl=self.impl), "backups" )
+                backup_dir = os.path.join( config.get_working_dir(impl=self.impl, working_dir=working_dir), "backups" )
                 if not os.path.exists(backup_dir):
                     try:
                         os.makedirs(backup_dir)
@@ -509,7 +509,7 @@ class StateEngine( object ):
                         os.abort()
                         
 
-                for p in [config.get_db_filename(impl=self.impl), config.get_snapshots_filename(impl=self.impl), config.get_lastblock_filename(impl=self.impl)]:
+                for p in [config.get_db_filename(impl=self.impl, working_dir=working_dir), config.get_snapshots_filename(impl=self.impl, working_dir=working_dir), config.get_lastblock_filename(impl=self.impl, working_dir=working_dir)]:
                     if os.path.exists(p):
                         try:
                             pbase = os.path.basename(p)
@@ -529,7 +529,7 @@ class StateEngine( object ):
         return
 
 
-    def clear_old_backups( self, block_id ):
+    def clear_old_backups( self, block_id, working_dir=None ):
         """
         If we limit the number of backups we make, then clean out old ones
         older than block_id - backup_max_age (given in the constructor)
@@ -542,7 +542,7 @@ class StateEngine( object ):
             return 
 
         # find old backups 
-        backup_dir = os.path.join( config.get_working_dir(impl=self.impl), "backups" )
+        backup_dir = os.path.join( config.get_working_dir(impl=self.impl, working_dir=working_dir), "backups" )
         if not os.path.exists(backup_dir):
             return 
 
@@ -574,7 +574,7 @@ class StateEngine( object ):
                     pass
 
     
-    def save( self, block_id, consensus_hash, pending_ops, backup=False ):
+    def save( self, block_id, consensus_hash, pending_ops, backup=False, working_dir=None ):
         """
         Write out all state to the working directory.
         Calls the implementation's 'db_save' method to store any state for this block.
@@ -598,9 +598,9 @@ class StateEngine( object ):
             os.abort()
 
         # stage data to temporary files
-        tmp_db_filename = (config.get_db_filename(impl=self.impl) + ".tmp")
-        tmp_snapshot_filename = (config.get_snapshots_filename(impl=self.impl) + ".tmp")
-        tmp_lastblock_filename = (config.get_lastblock_filename(impl=self.impl) + ".tmp")
+        tmp_db_filename = (config.get_db_filename(impl=self.impl, working_dir=working_dir) + ".tmp")
+        tmp_snapshot_filename = (config.get_snapshots_filename(impl=self.impl, working_dir=working_dir) + ".tmp")
+        tmp_lastblock_filename = (config.get_lastblock_filename(impl=self.impl, working_dir=working_dir) + ".tmp")
         
         try:
             with open(tmp_snapshot_filename, 'w') as f:
