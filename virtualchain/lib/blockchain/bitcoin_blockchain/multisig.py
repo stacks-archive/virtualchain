@@ -79,7 +79,7 @@ def make_multisig_wallet( m, n ):
 
     pks = []
     for i in xrange(0, n):
-        pk = BitcoinPrivateKey().to_wif()
+        pk = BitcoinPrivateKey(compressed=True).to_wif()
         pks.append(pk)
 
     return make_multisig_info( m, pks )
