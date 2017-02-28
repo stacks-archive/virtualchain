@@ -122,12 +122,21 @@ def tx_serialize( tx ):
 
 
 
+def tx_get_hash( tx_serialized ):
+    """
+    Make a transaction hash from a hex tx
+    """
+    tx_reversed_bin_hash = pybitcoin.bin_double_sha256( binascii.unhexlify(tx_serialized) )
+    tx_candidate_hash = binascii.hexlify(tx_reversed_bin_hash[::-1])
+    return tx_candidate_hash
+
+
 def tx_verify( tx, tx_hash ):
     """
     Confirm that a bitcoin transaction has the given hash.
     """
     tx_serialized = tx_serialize( tx )
-    tx_candidate_hash = bitcoin.txhash( tx_serialized )
+    tx_candidate_hash = tx_get_hash(tx_serialized)  # bitcoin.txhash( tx_serialized )
     # tx_reversed_bin_hash = pybitcoin.bin_double_sha256( binascii.unhexlify(tx_serialized) )
     # tx_candidate_hash = binascii.hexlify(tx_reversed_bin_hash[::-1])
 
