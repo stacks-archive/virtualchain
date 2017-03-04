@@ -56,6 +56,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
     """
 
     coin = None
+    timeout = 30
 
     def __init__(self, bitcoind_opts, spv_headers_path, first_block_height, last_block_height, p2p_port=None, sock=None, tx_filter=None ):
         """
@@ -77,6 +78,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
         if sock is None:
             sock = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
+            sock.settimeout(self.timeout)
             try:
                 sock.connect( (bitcoind_opts['bitcoind_server'], p2p_port) )
             except socket.error, e:
