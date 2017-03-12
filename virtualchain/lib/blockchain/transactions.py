@@ -124,6 +124,7 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
                                        p2p_port=blockchain_opts['bitcoind_p2p_port'], tx_filter=tx_filter )
 
             if first_block_height > last_block_height - 1:
+                downloader.loop_exit()
                 break
 
             rc = downloader.run()
