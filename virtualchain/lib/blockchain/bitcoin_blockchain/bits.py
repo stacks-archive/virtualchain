@@ -136,9 +136,7 @@ def tx_verify( tx, tx_hash ):
     Confirm that a bitcoin transaction has the given hash.
     """
     tx_serialized = tx_serialize( tx )
-    tx_candidate_hash = tx_get_hash(tx_serialized)  # bitcoin.txhash( tx_serialized )
-    # tx_reversed_bin_hash = pybitcoin.bin_double_sha256( binascii.unhexlify(tx_serialized) )
-    # tx_candidate_hash = binascii.hexlify(tx_reversed_bin_hash[::-1])
+    tx_candidate_hash = tx_get_hash(tx_serialized)
 
     if tx_hash != tx_candidate_hash:
         print tx_serialized
