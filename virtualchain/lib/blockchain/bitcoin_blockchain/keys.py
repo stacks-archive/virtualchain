@@ -22,8 +22,11 @@
 """
 
 import pybitcoin
+import keylib
 import bitcoin
 import os
+
+MAX_DATA_LEN = 40       # 40 bytes per data output
 
 # depending on whether or not we're talking to 
 # -testnet/-regtest or mainnet, determine which private
@@ -50,21 +53,6 @@ if os.environ.get("BLOCKSTACK_TESTNET", None) == "1":
         """
         return pybitcoin.hex_hash160_to_address( hexhash, version_byte=version_byte )
 
-    def get_private_key_obj(private_key):
-        if isinstance(private_key, TestnetPrivateKey):
-            return private_key
-        else:
-            return TestnetPrivateKey(private_key)
-
-    def analyze_private_key(private_key, blockchain_client):
-        private_key_obj = get_private_key_obj(private_key)
-        # determine the address associated with the supplied private key
-        from_address = private_key_obj.public_key().address() 
-        # get the unspent outputs corresponding to the given address
-        inputs = pybitcoin.get_unspents(from_address, blockchain_client)
-        # return the inputs
-        return private_key_obj, from_address, inputs
-
 else:
 
     version_byte = 0
@@ -75,8 +63,6 @@ else:
     BitcoinPublicKey = pybitcoin.BitcoinPublicKey
     
     hex_hash160_to_address = pybitcoin.hex_hash160_to_address
-
-    analyze_private_key = pybitcoin.analyze_private_key
 
 
 def make_payment_script( address ):
@@ -95,6 +81,31 @@ def make_payment_script( address ):
 
     else:
         raise ValueError("Unrecognized address '%s'" % address )
+
+
+def make_data_script( data ):
+    """
+    Make a data-bearing transaction output.
+    Data must be a hex string
+    """
+    assert len(data) < MAX_DATA_LEN * 2, "Data hex string is too long"     # note: data is a hex string
+    assert len(data) % 2 == 0, "Data hex string is not even length"
+    return "6a{:02x}{}".format(len(data)/2, data)
+
+
+def calculate_change_amount(inputs, send_amount, fee):
+    """
+    Find out how much change there exists between a set of tx inputs, the send amount and the tx fee.
+    @inputs must be a list of transaction inputs, i.e. [{'script_hex': str, 'value': int}]
+    """
+    # calculate the total amount  coming into the transaction from the inputs
+    total_amount_in = sum([input['value'] for input in inputs])
+    # change = whatever is left over from the amount sent & the transaction fee
+    change_amount = total_amount_in - send_amount - fee
+    # check to ensure the change amount is a non-negative value and return it
+    if change_amount < 0:
+        raise ValueError('Not enough inputs for transaction (total: {}, to spend: {}, fee: {}).'.format(total_amount_in, send_amount, fee))
+    return change_amount
 
 
 def script_hex_to_address( script_hex ):
