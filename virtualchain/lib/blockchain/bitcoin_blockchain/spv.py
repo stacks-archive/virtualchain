@@ -43,8 +43,6 @@ from protocoin.exceptions import *
 
 from keys import version_byte as VERSION_BYTE
 
-import pybitcoin
-import bitcoin
 import bits
 
 DEBUG = True
@@ -628,10 +626,10 @@ class SPVClient(object):
     @classmethod 
     def tx_hash( cls, tx ):
         """
-        Calculate the hash of a transction
+        Calculate the hash of a transction structure given by bitcoind
         """
-        tx_hex = bits.tx_serialize( tx )
-        tx_hash = pybitcoin.bin_double_sha256(tx_hex.decode('hex'))[::-1].encode('hex')
+        tx_hex = bits.btc_bitcoind_tx_serialize( tx )
+        tx_hash = bits.bin_double_sha256(tx_hex.decode('hex'))[::-1].encode('hex')
         return tx_hash
 
 
