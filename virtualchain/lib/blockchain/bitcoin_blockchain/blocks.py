@@ -41,8 +41,6 @@ from protocoin.fields import *
 from keys import version_byte as VERSION_BYTE
 from keys import script_hex_to_address
 import opcodes
-import pybitcoin
-import bitcoin
 import bits
 
 from spv import *
@@ -462,7 +460,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
         dict (i.e. like what bitcoind would give us).
         """
         scriptpubkey = binascii.hexlify( outp.pk_script )
-        script_info = bits.tx_output_parse_scriptPubKey( scriptpubkey )
+        script_info = bits.tx_output_parse_script( scriptpubkey )
         return {
             "value": Decimal(outp.value) / Decimal(10**8),
             "n": i,
@@ -551,6 +549,9 @@ class BlockchainDownloader( BitcoinBasicClient ):
         * ask for each transaction's sender transaction
         """
 
+        import virtualchain
+        from virtualchain.lib.merkle import MerkleTree
+        
         if self.have_all_block_data():
             self.loop_exit()
             return
@@ -569,7 +570,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
         # does this block's transaction hashes match the merkle root?
         tx_hashes = [block.txns[i].calculate_hash() for i in xrange(0, len(block.txns))]
-        mr = pybitcoin.MerkleTree( tx_hashes ).root()
+        mr = MerkleTree( tx_hashes ).root()
 
         if mr != header['merkle_root']:
             log.error("Merkle root of %s (%s) mismatch: expected %s, got %s" % (block_hash, height, header['merkle_root'], mr))
@@ -587,7 +588,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
             for outp in txdata['vout']:
                 if outp['scriptPubKey']['type'] == 'nulldata':
                     has_nulldata = True
-                    nulldata_payload = bitcoin.deserialize_script(outp['scriptPubKey']['hex'])[1]
+                    nulldata_payload = bits.btc_script_deserialize(outp['scriptPubKey']['hex'])[1]
                     if type(nulldata_payload) not in [str, unicode]:
                         # this is a malformed OP_RETURN, where the varint that should follow OP_RETURN doesn't have the data behind it.
                         # just take the data after the varint, no matter what it is (i.e. "6a52" will be "")
@@ -672,6 +673,9 @@ class BlockchainDownloader( BitcoinBasicClient ):
         Return None on error
         """
 
+        import virtualchain
+        from virtualchain.lib.hashing import bin_double_sha256
+
         headers = {'content-type': 'application/json'}
         reqs = []
         ret = {}
@@ -734,7 +738,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
                     tx_bin = txhex.decode('hex')
                     assert tx_bin is not None
 
-                    tx_hash_bin = pybitcoin.bin_double_sha256(tx_bin)[::-1]
+                    tx_hash_bin = bin_double_sha256(tx_bin)[::-1]
                     assert tx_hash_bin is not None
 
                     tx_hash = tx_hash_bin.encode('hex')
