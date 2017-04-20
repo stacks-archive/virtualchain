@@ -38,10 +38,7 @@ import threading
 import time
 import socket
 from .bitcoin_blockchain import AuthServiceProxy
-from utilitybelt import is_valid_int
 from ConfigParser import SafeConfigParser
-
-import bitcoin
 
 try:
    from ..config import DEBUG
@@ -116,7 +113,30 @@ class BitcoindConnection( httplib.HTTPSConnection ):
          self._tunnel()
          
       self.sock = ssl.wrap_socket( sock, cert_reqs=ssl.CERT_NONE )
-      
+
+
+def is_int(i):
+    """
+    Is the given object a long or an int?
+    """
+    return isinstance(i, (int,long))
+
+
+def is_valid_int(i):
+    """
+    Is the given object an integer?
+    """
+    if is_int(i):
+        return True
+    elif isinstance(i, str):
+        try:
+            int_i = int(i)
+        except:
+            return False
+        else:
+            return True
+    return False
+
 
 def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_https, timeout ):
     """
