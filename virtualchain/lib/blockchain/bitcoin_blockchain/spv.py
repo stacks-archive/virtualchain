@@ -628,8 +628,11 @@ class SPVClient(object):
         """
         Calculate the hash of a transction structure given by bitcoind
         """
+        import virtualchain
+        from virtualchain.lib.hashing import bin_double_sha256
+
         tx_hex = bits.btc_bitcoind_tx_serialize( tx )
-        tx_hash = bits.bin_double_sha256(tx_hex.decode('hex'))[::-1].encode('hex')
+        tx_hash = bin_double_sha256(tx_hex.decode('hex'))[::-1].encode('hex')
         return tx_hash
 
 
