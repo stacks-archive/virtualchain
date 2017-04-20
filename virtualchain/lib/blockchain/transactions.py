@@ -32,10 +32,8 @@ import time
 import types
 import random
 import copy
-import bitcoin
 import binascii
 import json
-import pybitcoin
 import pprint
 from decimal import *
 import cPickle as pickle
