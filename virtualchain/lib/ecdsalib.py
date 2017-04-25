@@ -21,96 +21,96 @@
      along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import ecdsa
+from ecdsa import SigningKey, VerifyingKey, SECP256k1
+from ecdsa.util import sigencode_der, sigdecode_der
+from ecdsa import BadSignatureError
+
 import keylib
 from keylib import ECPrivateKey, ECPublicKey
 
-import fastecdsa
-import fastecdsa.curve
-import fastecdsa.keys
-import fastecdsa.ecdsa
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
+from cryptography.exceptions import InvalidSignature
 
-from .blockchain.session import get_logger
+from .config import get_logger
 
-OLD_FASTECDSA = False
-try:
-    import fastecdsa.point
-except:
-    # older fastecdsa library
-    OLD_FASTECDSA = True
-    pass 
-
-from fastecdsa import _ecdsa
-from fastecdsa.util import RFC6979
-
-import hmac
-import hashlib
 import base64
+import hashlib
+import ecdsa
 
 log = get_logger("virtualchain-ecdsalib")
 
-class RFC6979_blockstack(RFC6979):
+class ECSigner(object):
     """
-    Generate RFC6979 nonces from a file or a digest.
-    Derived from the same code in fastecdsa.
+    Generic ECDSA signer object
     """
-    def __init__(self, x, q, hashfunc):
-        RFC6979.__init__(self, '', x, q, hashfunc)
-
-
-    def gen_nonce_from_digest( self, h1 ):
+    def __init__(self, privkey_hex):
         """
-        Make the nonce from the digest.
-        @h1: bin-encoded digest
-        @hash_size: size of the digest
+        Instantiate a signer with a hex-encoded ECDSA private key
         """
-        hash_size = self.hashfunc().digest_size
-        key_and_msg = self._int2octets(self.x) + self._bits2octets(h1)
+        pk_i = decode_privkey_hex(privkey_hex)
+        privk = ec.derive_private_key(pk_i, ec.SECP256K1(), default_backend())
+        self.signer = privk.signer(ec.ECDSA(hashes.SHA256()))
 
-        v = b''.join([b'\x01' for _ in range(hash_size)])
-        k = b''.join([b'\x00' for _ in range(hash_size)])
+    def update(self, data):
+        """
+        Update the hash used to generate the signature
+        """
+        try:
+            self.signer.update(data)
+        except TypeError:
+            log.error("Invalid data: {} ({})".format(type(data), data))
+            raise
 
-        k = hmac.new(k, v + b'\x00' + key_and_msg, self.hashfunc).digest()
-        v = hmac.new(k, v, self.hashfunc).digest()
-        k = hmac.new(k, v + b'\x01' + key_and_msg, self.hashfunc).digest()
-        v = hmac.new(k, v, self.hashfunc).digest()
-
-        while True:
-            t = b''
-
-            while len(t) * 8 < self.qlen:
-                v = hmac.new(k, v, self.hashfunc).digest()
-                t = t + v
-
-            nonce = self._bits2int(t)
-            if nonce >= 1 and nonce < self.q:
-                return nonce
-
-            k = hmac.new(k, v + b'\x00', self.hashfunc).digest()
-            v = hmac.new(k, v, self.hashfunc).digest()
+    def finalize(self):
+        """
+        Get the base64-encoded signature itself.
+        Can only be called once.
+        """
+        signature = self.signer.finalize()
+        sig_r, sig_s = decode_dss_signature(signature)
+        sig_b64 = encode_signature(sig_r, sig_s)
+        return sig_b64
 
 
-    def gen_nonce_from_file(self, fd, fd_len=None):
-        ''' http://tools.ietf.org/html/rfc6979#section-3.2 '''
-        # based on gen_nonce()
-        
-        h1 = self.hashfunc()
+class ECVerifier(object):
+    """
+    Generic ECDSA verifier object
+    """
+    def __init__(self, pubkey_hex, sigb64):
+        """
+        Instantiate the verifier with a hex-encoded public key and a base64-encoded signature
+        """
+        sig_r, sig_s = decode_signature(sigb64)
+        pubk = ec.EllipticCurvePublicNumbers.from_encoded_point(ec.SECP256K1(), pubkey_hex.decode('hex')).public_key(default_backend())
+        signature = encode_dss_signature(sig_r, sig_s)
+        self.verifier = pubk.verifier(signature, ec.ECDSA(hashes.SHA256()))
 
-        count = 0
-        while True:
-            buf = f.read(65536)
-            if len(buf) == 0:
-                break
+    def update(self, data):
+        """
+        Update the hash used to generate the signature
+        """
+        try:
+            self.verifier.update(data)
+        except TypeError:
+            log.error("Invalid data: {} ({})".format(type(data), data))
+            raise
 
-            if fd_len is not None:
-                if count + len(buf) > fd_len:
-                    buf = buf[:fd_len - count]
-
-            h.update(buf)
-            count += len(buf)
-
-        h1 = h1.digest()
-
-        return self.gen_nonce_from_digest(h1)
+    def verify(self):
+        """
+        Verify whether or not the public key matches the signature, given the data
+        """
+        try:
+            res = self.verifier.verify()
+            if res:
+                return True
+            else:
+                return False
+        except InvalidSignature:
+            return False
 
 
 def ecdsa_private_key(privkey_str=None):
@@ -119,6 +119,10 @@ def ecdsa_private_key(privkey_str=None):
     * unless the key's hex encoding specifically ends in '01', treat it as uncompressed.
     """
     compressed = False
+    if privkey_str is not None:
+        assert isinstance(privkey_str, (str, unicode))
+        privkey_str = str(privkey_str)
+
     if privkey_str is None or keylib.key_formatting.get_privkey_format(privkey_str).endswith('compressed'):
         compressed = True
 
@@ -129,35 +133,19 @@ def get_pubkey_hex( privatekey_hex ):
     """
     Get the uncompressed hex form of a private key
     """
+    assert isinstance(privatekey_hex, (str, unicode))
 
-    global OLD_FASTECDSA
-
+    # remove 'compressed' hint
     if len(privatekey_hex) > 64:
         assert privatekey_hex[-2:] == '01'
         privatekey_hex = privatekey_hex[:64]
 
     # get hex public key
     privatekey_int = int(privatekey_hex, 16)
-    pubkey_parts = fastecdsa.keys.get_public_key( privatekey_int, curve=fastecdsa.curve.secp256k1 )
-    x = None
-    y = None
-
-    if isinstance(pubkey_parts, (list, tuple)):
-        # older fastecdsa 
-        x = pubkey_parts[0]
-        y = pubkey_parts[1]
-
-    elif not OLD_FASTECDSA:
-        if isinstance(pubkey_parts, fastecdsa.point.Point):
-            # newer fastecdsa interface uses a Point class instead of a tuple
-            x = pubkey_parts.x
-            y = pubkey_parts.y
-        
-        else:
-            raise Exception("Incompatible fastecdsa library")
-
-    else:
-        raise Exception("Incompatible fastecdsa library")
+    privk = ec.derive_private_key(privatekey_int, ec.SECP256K1(), default_backend())
+    pubk = privk.public_key()
+    x = pubk.public_numbers().x
+    y = pubk.public_numbers().y
 
     pubkey_hex = "04{:064x}{:064x}".format(x, y)
     return pubkey_hex
@@ -168,6 +156,8 @@ def get_uncompressed_private_and_public_keys( privkey_str ):
     Get the private and public keys from a private key string.
     Make sure the both are *uncompressed*
     """
+    assert isinstance(privkey_str, (str, unicode))
+
     pk = ecdsa_private_key(str(privkey_str))
     pk_hex = pk.to_hex()
 
@@ -184,6 +174,8 @@ def decode_privkey_hex(privkey_hex):
     """
     Decode a private key for ecdsa signature
     """
+    assert isinstance(privkey_hex, (str, unicode))
+
     # force uncompressed
     priv = str(privkey_hex)
     if len(priv) > 64:
@@ -198,6 +190,8 @@ def decode_pubkey_hex(pubkey_hex):
     """
     Decode a public key for ecdsa verification
     """
+    assert isinstance(pubkey_hex, (str, unicode))
+
     pubk = str(pubkey_hex)
     if keylib.key_formatting.get_pubkey_format(pubk) == 'hex_compressed':
         pubk = keylib.key_formatting.decompress(pubk)
@@ -214,9 +208,9 @@ def encode_signature(sig_r, sig_s):
     Encode an ECDSA signature, with low-s
     """
     # enforce low-s 
-    if sig_s * 2 >= fastecdsa.curve.secp256k1.q:
+    if sig_s * 2 >= SECP256k1.order:
         log.debug("High-S to low-S")
-        sig_s = fastecdsa.curve.secp256k1.q - sig_s
+        sig_s = SECP256k1.order - sig_s
 
     sig_bin = '{:064x}{:064x}'.format(sig_r, sig_s).decode('hex')
     assert len(sig_bin) == 64
@@ -243,10 +237,12 @@ def sign_raw_data(raw_data, privatekey_hex):
     Sign a string of data.
     Returns signature as a base64 string
     """
-    pk_i = decode_privkey_hex(privatekey_hex)
-    sig_r, sig_s = fastecdsa.ecdsa.sign(raw_data, pk_i, curve=fastecdsa.curve.secp256k1)
-    sig_b64 = encode_signature(sig_r, sig_s)
-    return sig_b64
+    assert isinstance(raw_data, (str, unicode))
+    raw_data = str(raw_data)
+
+    si = ECSigner(privatekey_hex)
+    si.update(raw_data)
+    return si.finalize()
 
 
 def verify_raw_data(raw_data, pubkey_hex, sigb64):
@@ -256,49 +252,51 @@ def verify_raw_data(raw_data, pubkey_hex, sigb64):
     Return True on success.
     Return False on error.
     """
+    assert isinstance(raw_data, (str, unicode))
+    raw_data = str(raw_data)
+
+    vi = ECVerifier(pubkey_hex, sigb64)
+    vi.update(raw_data)
+    return vi.verify()
+
+
+def sign_digest(hash_hex, privkey_hex, hashfunc=hashlib.sha256):
+    """
+    Given a digest and a private key, sign it.
+    Return the base64-encoded signature
+    """
+    assert isinstance(hash_hex, (str, unicode))
+    hash_hex = str(hash_hex)
+
+    pk_uncompressed_hex, pubk_uncompressed_hex = get_uncompressed_private_and_public_keys(privkey_hex)
+
+    sk = SigningKey.from_string(pk_uncompressed_hex.decode('hex'), curve=SECP256k1)
+    sig_bin = sk.sign_digest(hash_hex.decode('hex'), sigencode=sigencode_der)
+    
+    sig_r, sig_s = sigdecode_der( sig_bin, SECP256k1.order )
+    sigb64 = encode_signature(sig_r, sig_s)
+    return sigb64
+
+
+def verify_digest(hash_hex, pubkey_hex, sigb64, hashfunc=hashlib.sha256):
+    """
+    Given a digest, public key (as hex), and a base64 signature,
+    verify that the public key signed the digest.
+    Return True if so
+    Return False if not
+    """
+    assert isinstance(hash_hex, (str, unicode))
+    hash_hex = str(hash_hex)
+
+    sig_r, sig_s = decode_signature(sigb64)
+    pubk_uncompressed_hex = keylib.key_formatting.decompress(pubkey_hex)
+
+    sig_bin = sigencode_der( sig_r, sig_s, SECP256k1.order )
+    vk = VerifyingKey.from_string(pubk_uncompressed_hex[2:].decode('hex'), curve=SECP256k1)
+
     try:
-        sig_r, sig_s = decode_signature(sigb64)
-        pubk_i = decode_pubkey_hex(pubkey_hex)
-        res = fastecdsa.ecdsa.verify((sig_r, sig_s), raw_data, pubk_i, curve=fastecdsa.curve.secp256k1)
+        res = vk.verify_digest(sig_bin, hash_hex.decode('hex'), sigdecode=sigdecode_der)
         return res
-    except (fastecdsa.ecdsa.EcdsaError, AssertionError):
-        # invalid signature
-        log.debug("Invalid signature {}".format(sigb64))
+    except BadSignatureError:
+        log.debug("Bad signature {}; not from {} on {}?".format(sigb64, pubkey_hex, hash_hex))
         return False
-
-
-def sign_digest( digest_hex, privkey_hex, curve=fastecdsa.curve.secp256k1, hashfunc=hashlib.sha256 ):
-    """
-    Sign a digest with ECDSA
-    Return base64 signature
-    """
-    pk_i = decode_privkey_hex(str(privkey_hex))
-
-    # generate a deterministic nonce per RFC6979
-    rfc6979 = RFC6979_blockstack(pk_i, curve.q, hashfunc)
-    k = rfc6979.gen_nonce_from_digest(digest_hex.decode('hex'))
-
-    r, s = _ecdsa.sign(digest_hex, str(pk_i), str(k), curve.name)
-    return encode_signature(int(r), int(s))
-
-
-def verify_digest( digest_hex, pubkey_hex, sigb64, curve=fastecdsa.curve.secp256k1, hashfunc=hashlib.sha256 ):
-    """
-    Verify a digest and signature with ECDSA
-    Return True if it matches
-    """
-
-    Q = decode_pubkey_hex(str(pubkey_hex))
-    r, s = decode_signature(sigb64)
-
-    # validate Q, r, s
-    if not curve.is_point_on_curve(Q):
-        raise fastecdsa.ecdsa.EcdsaError('Invalid public key, point is not on curve {}'.format(curve.name))
-    elif r > curve.q or r < 1:
-        raise fastecdsa.ecdsa.EcdsaError('Invalid Signature: r is not a positive integer smaller than the curve order')
-    elif s > curve.q or s < 1:
-        raise fastecdsa.ecdsa.EcdsaError('Invalid Signature: s is not a positive integer smaller than the curve order')
-
-    qx, qy = Q
-    return _ecdsa.verify(str(r), str(s), digest_hex, str(qx), str(qy), curve.name)
-
