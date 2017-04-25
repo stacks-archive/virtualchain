@@ -45,10 +45,12 @@ from keys import version_byte as VERSION_BYTE
 
 import bits
 
+from ....lib import hashing
+
 DEBUG = True
 
 try:
-    from ..session import get_logger
+    from ....lib.config import get_logger
 except:
     def get_logger(name=None):
         """
@@ -628,11 +630,8 @@ class SPVClient(object):
         """
         Calculate the hash of a transction structure given by bitcoind
         """
-        import virtualchain
-        from virtualchain.lib.hashing import bin_double_sha256
-
         tx_hex = bits.btc_bitcoind_tx_serialize( tx )
-        tx_hash = bin_double_sha256(tx_hex.decode('hex'))[::-1].encode('hex')
+        tx_hash = hashing.bin_double_sha256(tx_hex.decode('hex'))[::-1].encode('hex')
         return tx_hash
 
 

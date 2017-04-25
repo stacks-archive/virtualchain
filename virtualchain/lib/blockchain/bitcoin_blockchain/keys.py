@@ -29,6 +29,8 @@ import re
 from opcodes import *
 from jsonschema import ValidationError
 
+from ....lib import hashing, encoding, ecdsalib
+
 MAX_DATA_LEN = 40       # 40 bytes per data output
 
 OP_BASE58CHECK_PATTERN = r'^([123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+)$'
@@ -127,8 +129,6 @@ def btc_script_to_hex(script):
     """ Parse the string representation of a script and return the hex version.
         Example: "OP_DUP OP_HASH160 c629...a6db OP_EQUALVERIFY OP_CHECKSIG"
     """
-    import virtualchain
-    from virtualchain.lib.hashing import is_hex, count_bytes
 
     hex_script = ''
     parts = script.split(' ')
@@ -142,8 +142,8 @@ def btc_script_to_hex(script):
         elif isinstance(part, (int)):
             hex_script += '%0.2x' % part
 
-        elif is_hex(part):
-            hex_script += '%0.2x' % count_bytes(part) + part
+        elif hashing.is_hex(part):
+            hex_script += '%0.2x' % hashing.count_bytes(part) + part
 
         else:
             raise Exception('Invalid script - only opcodes and hex characters allowed.')
@@ -159,8 +159,6 @@ def btc_script_deserialize(script):
     Based on code in pybitcointools (https://github.com/vbuterin/pybitcointools)
     by Vitalik Buterin
     """
-    import virtualchain
-    from virtualchain.lib.encoding import json_changebase, safe_hexlify, encode, decode, from_byte_to_int
 
     if isinstance(script, str) and re.match('^[0-9a-fA-F]*$', script):
        script = binascii.unhexlify(script)
@@ -171,7 +169,7 @@ def btc_script_deserialize(script):
 
     while pos < len(script):
         # next script op...
-        code = from_byte_to_int(script[pos])
+        code = encoding.from_byte_to_int(script[pos])
 
         if code == 0:
             # empty (OP_0)
@@ -187,7 +185,7 @@ def btc_script_deserialize(script):
             # OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4, followed by length and data
             # push the data itself
             szsz = pow(2, code - 76)
-            sz = decode(script[pos+szsz: pos:-1], 256)
+            sz = encoding.decode(script[pos+szsz: pos:-1], 256)
             out.append(script[pos + 1 + szsz : pos + 1 + szsz + sz])
             pos += 1 + szsz + sz
 
@@ -205,7 +203,7 @@ def btc_script_deserialize(script):
             pos += 1
 
     # make sure each string is hex'ed
-    out = json_changebase(out, lambda x: safe_hexlify(x))
+    out = encoding.json_changebase(out, lambda x: encoding.safe_hexlify(x))
     return out
 
 
@@ -218,16 +216,13 @@ def _btc_script_serialize_unit(unit):
     by Vitalik Buterin
     """
     
-    import virtualchain
-    from virtualchain.lib.encoding import from_int_to_byte, encode
-
     if isinstance(unit, int):
         if unit < 16:
             # OP_1 thru OP_16
-            return from_int_to_byte(unit + 80)
+            return encoding.from_int_to_byte(unit + 80)
         else:
             # pass literal
-            return from_int_to_byte(unit)
+            return encoding.from_int_to_byte(unit)
 
     elif unit is None:
         # None means OP_0
@@ -236,18 +231,18 @@ def _btc_script_serialize_unit(unit):
     else:
         if len(unit) <= 75:
             # length + payload
-            return from_int_to_byte(len(unit))+unit
+            return encoding.from_int_to_byte(len(unit))+unit
 
         elif len(unit) < 256:
             # OP_PUSHDATA1 + length (1 byte) + payload
-            return from_int_to_byte(76) + from_int_to_byte(len(unit)) + unit
+            return encoding.from_int_to_byte(76) + encoding.from_int_to_byte(len(unit)) + unit
 
         elif len(unit) < 65536:
             # OP_PUSHDATA2 + length (2 bytes, big-endian) + payload
-            return from_int_to_byte(77) + encode(len(unit), 256, 2)[::-1] + unit
+            return encoding.from_int_to_byte(77) + encoding.encode(len(unit), 256, 2)[::-1] + unit
         else:
             # OP_PUSHDATA4 + length (4 bytes, big-endian) + payload
-            return from_int_to_byte(78) + encode(len(unit), 256, 4)[::-1] + unit
+            return encoding.from_int_to_byte(78) + encoding.encode(len(unit), 256, 4)[::-1] + unit
 
 
 def btc_script_serialize(_script):
@@ -258,16 +253,13 @@ def btc_script_serialize(_script):
     Based on code from pybitcointools (https://github.com/vbuterin/pybitcointools)
     by Vitalik Buterin
     """
-    import virtualchain
-    from virtualchain.lib.encoding import json_is_base, json_changebase, safe_hexlify
-
     script = _script
-    if json_is_base(_script, 16):
+    if encoding.json_is_base(_script, 16):
         # hex-to-bin all hex strings in this script
-        script = json_changebase(_script, lambda x: binascii.unhexlify(x))
+        script = encoding.json_changebase(_script, lambda x: binascii.unhexlify(x))
 
     # encode each item and return the concatenated list
-    return safe_hexlify( ''.join(map(_btc_script_serialize_unit, script)) )
+    return encoding.safe_hexlify( ''.join(map(_btc_script_serialize_unit, script)) )
 
 
 def make_payment_script( address ):
@@ -351,10 +343,7 @@ def btc_make_p2sh_address( script_hex ):
     """
     Make a P2SH address from a hex script
     """
-    import virtualchain
-    from virtualchain.lib.hashing import bin_hash160
-
-    h = bin_hash160(binascii.unhexlify(script_hex))
+    h = hashing.bin_hash160(binascii.unhexlify(script_hex))
     addr = bin_hash160_to_address(h, version_byte=multisig_version_byte)
     return addr
 
@@ -485,11 +474,9 @@ def get_privkey_address(privkey_info):
     Return the address on success
     Raise exception on error
     """
-    import virtualchain
-    from virtualchain.lib.ecdsalib import ecdsa_private_key
 
     if is_singlesig(privkey_info):
-        return address_reencode( ecdsa_private_key(privkey_info).public_key().address() )
+        return address_reencode( ecdsalib.ecdsa_private_key(privkey_info).public_key().address() )
     
     if is_multisig(privkey_info):
         redeem_script = str(privkey_info['redeem_script'])

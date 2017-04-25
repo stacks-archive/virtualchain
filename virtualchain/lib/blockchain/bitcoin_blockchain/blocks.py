@@ -45,6 +45,8 @@ import bits
 
 from spv import *
 
+from ....lib import encoding, ecdsalib, hashing, merkle
+
 log = logging.getLogger("virtualchain")
 
 class BlockchainDownloader( BitcoinBasicClient ):
@@ -549,9 +551,6 @@ class BlockchainDownloader( BitcoinBasicClient ):
         * ask for each transaction's sender transaction
         """
 
-        import virtualchain
-        from virtualchain.lib.merkle import MerkleTree
-        
         if self.have_all_block_data():
             self.loop_exit()
             return
@@ -570,7 +569,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
         # does this block's transaction hashes match the merkle root?
         tx_hashes = [block.txns[i].calculate_hash() for i in xrange(0, len(block.txns))]
-        mr = MerkleTree( tx_hashes ).root()
+        mr = merkle.MerkleTree( tx_hashes ).root()
 
         if mr != header['merkle_root']:
             log.error("Merkle root of %s (%s) mismatch: expected %s, got %s" % (block_hash, height, header['merkle_root'], mr))
@@ -673,9 +672,6 @@ class BlockchainDownloader( BitcoinBasicClient ):
         Return None on error
         """
 
-        import virtualchain
-        from virtualchain.lib.hashing import bin_double_sha256
-
         headers = {'content-type': 'application/json'}
         reqs = []
         ret = {}
@@ -738,7 +734,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
                     tx_bin = txhex.decode('hex')
                     assert tx_bin is not None
 
-                    tx_hash_bin = bin_double_sha256(tx_bin)[::-1]
+                    tx_hash_bin = hashing.bin_double_sha256(tx_bin)[::-1]
                     assert tx_hash_bin is not None
 
                     tx_hash = tx_hash_bin.encode('hex')

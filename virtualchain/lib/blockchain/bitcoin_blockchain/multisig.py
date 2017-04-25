@@ -48,13 +48,10 @@ def make_multisig_info( m, pks ):
     * redeem_script will be hex-encoded
     """
 
-    import virtualchain
-    from virtualchain.lib.ecdsalib import ecdsa_private_key
-
     pubs = []
     privkeys = []
     for pk in pks:
-        priv = ecdsa_private_key(pk)
+        priv = BitcoinPrivateKey(pk)
         priv_hex = priv.to_hex()
         pub_hex = priv.public_key().to_hex()
 

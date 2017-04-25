@@ -43,6 +43,7 @@ from .keys import script_hex_to_address, address_reencode, is_singlesig, is_mult
         calculate_change_amount, btc_script_deserialize, btc_script_serialize
 
 from .opcodes import *
+from ....lib import encoding, ecdsalib, hashing, merkle
 
 import traceback
 import logging
@@ -83,9 +84,6 @@ def btc_tx_deserialize(_tx):
     Derived from pybitcointools (https://github.com/vbuterin/pybitcointools) written by Vitalik Buterin
     """
 
-    import virtualchain
-    from virtualchain.lib.encoding import safe_hexlify, from_byte_to_int, decode, json_changebase, from_byte_to_int
-
     tx = None
     if isinstance(_tx, str) and re.match('^[0-9a-fA-F]*$', _tx):
         # convert from hex to bin, safely
@@ -100,12 +98,12 @@ def btc_tx_deserialize(_tx):
 
     def read_as_int(bytez):
         buf[0] += bytez
-        return decode( tx[ buf[0]-bytez:buf[0] ][::-1], 256 )
+        return encoding.decode( tx[ buf[0]-bytez:buf[0] ][::-1], 256 )
 
     def read_var_int():
         buf[0] += 1
         
-        val = from_byte_to_int( tx[ buf[0]-1 ] )
+        val = encoding.from_byte_to_int( tx[ buf[0]-1 ] )
         if val < 253:
             return val
 
@@ -154,7 +152,7 @@ def btc_tx_deserialize(_tx):
     obj["locktime"] = read_as_int(4)
 
     # hexlify each byte field 
-    obj = json_changebase(obj, lambda x: safe_hexlify(x))
+    obj = encoding.json_changebase(obj, lambda x: encoding.safe_hexlify(x))
     return obj
 
 
@@ -166,23 +164,20 @@ def btc_tx_serialize(_txobj):
     Derived from code written by Vitalik Buterin in pybitcointools (https://github.com/vbuterin/pybitcointools)
     """
     
-    import virtualchain
-    from virtualchain.lib.encoding import json_is_base, json_changebase, encode, safe_hexlify, num_to_var_int
-
     # output buffer
     o = []
     txobj = None
-    if json_is_base(_txobj, 16):
+    if encoding.json_is_base(_txobj, 16):
         # txobj is built from hex strings already.  deserialize them 
-        txobj = json_changebase(_txobj, lambda x: binascii.unhexlify(x))
+        txobj = encoding.json_changebase(_txobj, lambda x: binascii.unhexlify(x))
     else:
         txobj = copy.deepcopy(_txobj)
 
     # version
-    o.append(encode(txobj["version"], 256, 4)[::-1])
+    o.append(encoding.encode(txobj["version"], 256, 4)[::-1])
 
     # number of inputs
-    o.append(num_to_var_int(len(txobj["ins"])))
+    o.append(encoding.num_to_var_int(len(txobj["ins"])))
 
     # all inputs
     for inp in txobj["ins"]:
@@ -190,37 +185,37 @@ def btc_tx_serialize(_txobj):
         o.append(inp["outpoint"]["hash"][::-1])
 
         # input tx outpoint
-        o.append(encode(inp["outpoint"]["index"], 256, 4)[::-1])
+        o.append(encoding.encode(inp["outpoint"]["index"], 256, 4)[::-1])
 
         # input scriptsig
         script = inp.get('script')
         if not script:
             script = bytes()
 
-        scriptsig = num_to_var_int(len(script)) + script
+        scriptsig = encoding.num_to_var_int(len(script)) + script
         o.append(scriptsig)
 
         # sequence
-        o.append(encode(inp.get("sequence", UINT_MAX), 256, 4)[::-1])
+        o.append(encoding.encode(inp.get("sequence", UINT_MAX), 256, 4)[::-1])
 
     # number of outputs
-    o.append(num_to_var_int(len(txobj["outs"])))
+    o.append(encoding.num_to_var_int(len(txobj["outs"])))
 
     # all outputs
     for out in txobj["outs"]:
 
         # value
-        o.append(encode(out["value"], 256, 8)[::-1])
+        o.append(encoding.encode(out["value"], 256, 8)[::-1])
 
         # scriptPubKey
-        scriptpubkey = num_to_var_int(len(out['script'])) + out['script']
+        scriptpubkey = encoding.num_to_var_int(len(out['script'])) + out['script']
         o.append(scriptpubkey)
 
     # locktime
-    o.append(encode(txobj["locktime"], 256, 4)[::-1])
+    o.append(encoding.encode(txobj["locktime"], 256, 4)[::-1])
 
     # full string
-    ret = ''.join( json_changebase(o, lambda x: safe_hexlify(x)) )
+    ret = ''.join( encoding.json_changebase(o, lambda x: encoding.safe_hexlify(x)) )
     return ret
 
 
@@ -301,16 +296,12 @@ def btc_tx_get_hash( tx_serialized, hashcode=None ):
     """
     Make a transaction hash from a hex tx
     """
-    import virtualchain
-    from virtualchain.lib.hashing import bin_double_sha256
-    from virtualchain.lib.encoding import encode
-    
     tx_bin = binascii.unhexlify(tx_serialized)
     if hashcode:
-        return binascii.hexlify( bin_double_sha256(tx_bin + encode(int(hashcode), 256, 4)[::-1]) )
+        return binascii.hexlify( hashing.bin_double_sha256(tx_bin + encoding.encode(int(hashcode), 256, 4)[::-1]) )
 
     else:
-        return binascii.hexlify( bin_double_sha256(tx_bin)[::-1] )
+        return binascii.hexlify( hashing.bin_double_sha256(tx_bin)[::-1] )
 
 
 def tx_script_to_asm( script_hex ):
@@ -387,7 +378,8 @@ def tx_der_encode_integer(r):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded integer
-    Based on code from python-ecdsa (https://github.com/werner/python-ecdsa)
+
+    Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
     by Brian Warner.  Subject to the MIT license.
     """
     # borrowed from python-ecdsa
@@ -410,7 +402,8 @@ def tx_der_encode_length(l):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded length field
-    Based on code from python-ecdsa (https://github.com/werner/python-ecdsa)
+
+    Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
     by Brian Warner.  Subject to the MIT license.
     """
     assert l >= 0
@@ -428,7 +421,8 @@ def tx_der_encode_sequence(*encoded_pieces):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded sequence
-    Based on code from python-ecdsa (https://github.com/werner/python-ecdsa)
+
+    Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
     by Brian Warner.  Subject to the MIT license.
     """
     # borrowed from python-ecdsa
@@ -440,7 +434,8 @@ def tx_der_encode_signature(r, s):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded signature as a 2-item sequence
-    Based on code from python-ecdsa (https://github.com/werner/python-ecdsa)
+
+    Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
     by Brian Warner.  Subject to the MIT license.
     """
     # borrowed from python-ecdsa
@@ -500,8 +495,6 @@ def btc_tx_apply_multisignatures(tx, i, script, sigs):
     script is a hex-encoded redeem script
     sigs is a list of hex-encoded signatures
     """
-    import virtualchain
-    from virtualchain.lib.encoding import safe_hexlify
 
     # Not pushing empty elements on the top of the stack if passing no
     # script (in case of bare multisig inputs there is no script)
@@ -523,11 +516,7 @@ def btc_tx_make_input_signature(tx, idx, script, privkey_str, hashcode):
 
     Return the hex signature.
     """
-    import virtualchain
-    from virtualchain.lib.ecdsalib import ecdsa_private_key, get_uncompressed_private_and_public_keys, decode_signature, sign_digest, verify_digest
-    from virtualchain.lib.encoding import encode
-
-    pk = ecdsa_private_key(str(privkey_str))
+    pk = ecdsalib.ecdsa_private_key(str(privkey_str))
     pubk = pk.public_key()
     
     priv = pk.to_hex()
@@ -542,15 +531,15 @@ def btc_tx_make_input_signature(tx, idx, script, privkey_str, hashcode):
     txhash = btc_tx_get_hash( signing_tx, hashcode )
 
     # sign using uncompressed private key
-    pk_uncompressed_hex, pubk_uncompressed_hex = get_uncompressed_private_and_public_keys(priv)
-    sigb64 = sign_digest( txhash, priv )
+    pk_uncompressed_hex, pubk_uncompressed_hex = ecdsalib.get_uncompressed_private_and_public_keys(priv)
+    sigb64 = ecdsalib.sign_digest( txhash, priv )
 
     # sanity check 
-    assert verify_digest( txhash, pubk_uncompressed_hex, sigb64 )
+    assert ecdsalib.verify_digest( txhash, pubk_uncompressed_hex, sigb64 )
 
-    sig_r, sig_s = decode_signature(sigb64)
+    sig_r, sig_s = ecdsalib.decode_signature(sigb64)
     sig_bin = tx_der_encode_signature(sig_r, sig_s)
-    sig = sig_bin.encode('hex') + encode(hashcode, 16, 2)
+    sig = sig_bin.encode('hex') + encoding.encode(hashcode, 16, 2)
 
     return sig
 
@@ -561,14 +550,12 @@ def btc_tx_sign_multisig(tx, idx, redeem_script, private_keys, hashcode=SIGHASH_
     Return the signed transaction
     """
     
-    import virtualchain
-    from virtualchain.lib.ecdsalib import ecdsa_private_key
     from .multisig import parse_multisig_redeemscript
     
     # sign in the right order.  map all possible public keys to their private key 
     privs = {}
     for pk in private_keys:
-        pubk = ecdsa_private_key(pk).public_key().to_hex()
+        pubk = ecdsalib.ecdsa_private_key(pk).public_key().to_hex()
 
         compressed_pubkey = keylib.key_formatting.compress(pubk)
         uncompressed_pubkey = keylib.key_formatting.decompress(pubk)
@@ -603,11 +590,7 @@ def btc_tx_sign_singlesig(tx, idx, private_key_info, hashcode=SIGHASH_ALL):
     Sign a p2pkh input
     Return the signed transaction
     """
-    import virtualchain
-    from virtualchain.lib.ecdsalib import ecdsa_private_key
-    from virtualchain.lib.encoding import safe_hexlify
-
-    pk = ecdsa_private_key(str(private_key_info))
+    pk = ecdsalib.ecdsa_private_key(str(private_key_info))
     pubk = pk.public_key()
 
     pub = pubk.to_hex()
@@ -690,22 +673,18 @@ def block_header_serialize( inp ):
     Based on code from pybitcointools (https://github.com/vbuterin/pybitcointools)
     by Vitalik Buterin
     """
-
-    import virtualchain
-    from virtualchain.lib.encoding import encode
-    from virtualchain.lib.hashing import bin_sha256
     
     # concatenate to form header
-    o = encode(inp['version'], 256, 4)[::-1] + \
+    o = encoding.encode(inp['version'], 256, 4)[::-1] + \
         inp['prevhash'].decode('hex')[::-1] + \
         inp['merkle_root'].decode('hex')[::-1] + \
-        encode(inp['timestamp'], 256, 4)[::-1] + \
-        encode(inp['bits'], 256, 4)[::-1] + \
-        encode(inp['nonce'], 256, 4)[::-1]
+        encoding.encode(inp['timestamp'], 256, 4)[::-1] + \
+        encoding.encode(inp['bits'], 256, 4)[::-1] + \
+        encoding.encode(inp['nonce'], 256, 4)[::-1]
 
     # get (reversed) hash
-    h = bin_sha256(bin_sha256(o))[::-1].encode('hex')
-    assert h == inp['hash'], (sha256(o), inp['hash'])
+    h = hashing.bin_sha256(bin_sha256(o))[::-1].encode('hex')
+    assert h == inp['hash'], (bin_sha256(o).encode('hex'), inp['hash'])
 
     return o.encode('hex')
 
@@ -731,11 +710,8 @@ def block_header_verify( block_data, prev_hash, block_hash ):
     """
     Verify whether or not bitcoind's block header matches the hash we expect.
     """
-    import virtualchain
-    from virtualchain.lib.hashing import bin_double_sha256
-
     serialized_header = block_header_to_hex( block_data, prev_hash )
-    candidate_hash_bin_reversed = bin_double_sha256(binascii.unhexlify(serialized_header))
+    candidate_hash_bin_reversed = hashing.bin_double_sha256(binascii.unhexlify(serialized_header))
     candidate_hash = binascii.hexlify( candidate_hash_bin_reversed[::-1] )
 
     return block_hash == candidate_hash
@@ -751,11 +727,8 @@ def block_verify( block_data ):
     Return False if not.
     """
     
-    import virtualchain
-    from virtualchain.lib.merkle import MerkleTree
-
     # verify block data txs 
-    m = MerkleTree( block_data['tx'] )
+    m = merkle.MerkleTree( block_data['tx'] )
     root_hash = str(m.root())
 
     return root_hash == str(block_data['merkleroot'])
