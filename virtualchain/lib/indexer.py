@@ -115,20 +115,19 @@ class StateEngine( object ):
         hashes for each block.
         
         This class will be fed a sequence of sets of transactions, grouped by block 
-        and ordered by block ID, that each contain an OP_RETURN.  The nulldata 
-        assocated with the OP_RETURN will be parsed, checked, logged, and 
-        committed by the implementation (impl).  The implementation decides exactly 
-        what each of these mean; this class simply feeds it the transactions
-        in the order they appeared on the blockchain.
+        and ordered by block ID, that each contain a data-bearing field.  The data
+        will be parsed, checked, logged, and committed by the implementation (impl).
+        The implementation decides exactly what each of these mean; this class simply
+        feeds it the transactions in the order they appeared on the blockchain.
         
-        This class looks for OP_RETURN data that starts with the byte sequence in magic_bytes,
+        This class looks for transaction data that starts with the byte sequence in magic_bytes,
         and then only select those which start with magic_bytes + op, where op is an 
         opcode byte in opcodes.  Magic bytes can be of variable length, but it should
         be specific to this virtual chain.
         
-        Expected OP_RETURN data format:
+        Expected transaction data field format:
         
-         0     M  M+1                      len(OP_RETURN)-M-1
+         0     M  M+1                      len(data_field)-M-1
          |-----|--|------------------------|
           magic op payload
         
@@ -838,10 +837,14 @@ class StateEngine( object ):
    
     def parse_transaction( self, block_id, tx ):
         """
-        Given a block ID and an OP_RETURN transaction, 
+        Given a block ID and an data-bearing transaction, 
         try to parse it into a virtual chain operation.
         
         Use the implementation's 'db_parse' method to do so.
+        
+        Data transactions that do not have the magic bytes or a valid opcode
+        will be skipped automatically.  The db_parse method does not need
+        to know how to handle them.
         
         Set the following fields in op:
         * virtualchain_opcode:   the operation code 
@@ -854,36 +857,44 @@ class StateEngine( object ):
         Return None on error
         """
         
-        op_return_hex = tx['nulldata']
+        data_hex = tx['nulldata']
         inputs = tx['vin']
         outputs = tx['vout']
         senders = tx['senders']
         fee = tx['fee']
         
-        if not is_hex(op_return_hex):
+        if not is_hex(data_hex):
             # not a valid hex string 
             return None
         
-        if len(op_return_hex) % 2 != 0:
+        if len(data_hex) % 2 != 0:
             # not valid hex string 
             return None
         
+        data_bin = None
         try:
-            op_return_bin = binascii.unhexlify( op_return_hex )
+            # should always work; the tx downloader converts the binary string to hex
+            data_bin = binascii.unhexlify( data_hex )
         except Exception, e:
-            log.error("Failed to parse transaction: %s (OP_RETURN = %s)" % (tx, op_return_hex))
+            log.error("Failed to parse transaction: %s (data_hex = %s)" % (tx, data_hex))
             raise e
         
-        if not op_return_bin.startswith( self.magic_bytes ):
+        if not data_bin.startswith( self.magic_bytes ):
+            # not for us
             return None
         
-        op_code = op_return_bin[ len(self.magic_bytes) ]
+        if len(data_bin) < len(self.magic_bytes) + 1:
+            # invalid operation--no opcode
+            return None
+
+        # 3rd byte is always the operation code
+        op_code = data_bin[ len(self.magic_bytes) ]
         
         if op_code not in self.opcodes:
             return None 
         
-        # looks like a valid op.  Try to parse it.
-        op_payload = op_return_bin[ len(self.magic_bytes)+1: ]
+        # looks like an op.  Try to parse it.
+        op_payload = data_bin[ len(self.magic_bytes)+1: ]
         
         op = self.impl.db_parse( block_id, tx['txid'], tx['txindex'], op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state )
         
@@ -996,7 +1007,8 @@ class StateEngine( object ):
             op_sanitized, _ = self.remove_reserved_keys( op_data )
             initial_scan.append( copy.deepcopy( op_sanitized ) )
 
-        # for backwards-compatibility 
+        # allow the implementation to do a pre-scan of the set of ops 
+        # (e.g. in Blockstack, this gets used to find name registration collisions)
         if hasattr(self.impl, "db_scan_block"):
             self.impl.db_scan_block( block_id, initial_scan, db_state=self.state )
         else:
@@ -1101,7 +1113,7 @@ class StateEngine( object ):
     def build( cls, bitcoind_opts, end_block_id, state_engine, expected_snapshots={}, tx_filter=None ):
         """
         Top-level call to process all blocks in the blockchain.
-        Goes and fetches all OP_RETURN nulldata in order,
+        Goes and fetches all data-bearing transactions in order,
         and feeds them into the state engine implementation using its
         'db_parse', 'db_check', 'db_commit', and 'db_save'
         methods.
