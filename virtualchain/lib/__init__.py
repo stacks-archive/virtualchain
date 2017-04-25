@@ -21,12 +21,14 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-
-import config 
-import blockchain 
-import indexer 
 import ecdsalib
+import encoding
 import hashing
+import merkle
+
+import config
+import blockchain
+import indexer
 
 from config import *
 from blockchain import *

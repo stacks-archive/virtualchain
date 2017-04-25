@@ -38,7 +38,7 @@ from ConfigParser import SafeConfigParser
 from .lib import config, indexer
 from .lib.blockchain import session
 
-log = session.get_logger("virtualchain")
+log = config.get_logger("virtualchain")
 
 # global instance of our implementation's state engine
 state_engine = None

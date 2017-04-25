@@ -54,7 +54,7 @@ import config
 import blockchain.transactions as transactions
 import blockchain.session as session
 
-log = session.get_logger("virtualchain")
+log = config.get_logger("virtualchain")
  
 RESERVED_KEYS = [
    'virtualchain_opcode',

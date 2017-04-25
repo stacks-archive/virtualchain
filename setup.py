@@ -43,7 +43,8 @@ setup(
         'protocoin>=0.2',
         'simplejson>=3.8.2',
         'jsonschema>=2.5.1',
-        'fastecdsa>=1.3.2',
+        'cryptography>=1.8.1',
+        'ecdsa>=0.13',
         'six>=1.10.0',
     ],
     classifiers=[
