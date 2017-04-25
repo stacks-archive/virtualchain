@@ -24,7 +24,7 @@
 import traceback
 
 import sys 
-from .bitcoin_blockchain import JSONRPCException, BlockchainDownloader, SPVClient
+from bitcoin_blockchain import JSONRPCException, BlockchainDownloader, SPVClient
 
 import logging
 import os
@@ -38,8 +38,9 @@ import pprint
 from decimal import *
 import cPickle as pickle
 
-import session
-log = session.get_logger("virtualchain")
+from ..config import get_logger
+
+log = get_logger("virtualchain")
 
 from bitcoin_blockchain.bits import *
 
