@@ -40,7 +40,6 @@ from protocoin.fields import *
 
 from keys import version_byte as VERSION_BYTE
 from keys import script_hex_to_address
-import opcodes
 import bits
 
 from spv import *
@@ -606,10 +605,11 @@ class BlockchainDownloader( BitcoinBasicClient ):
             if not has_nulldata:
                 continue
 
-            # remember nulldata
+            # remember nulldata, even if it's empty
             txdata['nulldata'] = nulldata_payload 
             
             # calculate total output (part of fee; will be debited when we discover the senders)
+            # NOTE: this works because we have out['value'] as type Decimal
             txdata['fee'] -= sum( int(out['value'] * 10**8) for out in txdata['vout'] )
 
             # remember the relative tx index (i.e. the ith nulldata tx)
