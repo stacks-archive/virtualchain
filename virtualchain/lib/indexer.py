@@ -876,7 +876,10 @@ class StateEngine( object ):
         
         if not op_return_bin.startswith( self.magic_bytes ):
             return None
-        
+       
+        if len(op_return_bin) < len(self.magic_bytes) + 1:
+            return None
+
         op_code = op_return_bin[ len(self.magic_bytes) ]
         
         if op_code not in self.opcodes:
