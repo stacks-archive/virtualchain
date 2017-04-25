@@ -587,7 +587,14 @@ class BlockchainDownloader( BitcoinBasicClient ):
             for outp in txdata['vout']:
                 if outp['scriptPubKey']['type'] == 'nulldata':
                     has_nulldata = True
-                    nulldata_payload = bits.btc_script_deserialize(outp['scriptPubKey']['hex'])[1]
+                    nulldata_script = bits.btc_script_deserialize(outp['scriptPubKey']['hex'])
+                    if len(nulldata_script) < 2:
+                        # malformed OP_RETURN; no data after '6a'
+                        nulldata_payload = None
+
+                    else:
+                        nulldata_payload = bits.btc_script_deserialize(outp['scriptPubKey']['hex'])[1]
+
                     if type(nulldata_payload) not in [str, unicode]:
                         # this is a malformed OP_RETURN, where the varint that should follow OP_RETURN doesn't have the data behind it.
                         # just take the data after the varint, no matter what it is (i.e. "6a52" will be "")
