@@ -762,11 +762,11 @@ def tx_output_parse_script( scriptpubkey ):
 
         addresses = [addr]
 
+    elif script_tokens[0] == OPCODE_VALUES['OP_RETURN']:
+        script_type = "nulldata"
+
     elif scriptpubkey.endswith("ae"):
         script_type = "multisig"
-
-    elif scriptpubkey.startswith("6a"):
-        script_type = "nulldata"
 
     elif len(script_tokens) == 2 and script_tokens[-1] == OPCODE_VALUES["OP_CHECKSIG"]:
         script_type = "pubkey"
