@@ -21,23 +21,11 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-
-import argparse
 import logging
 import os
-import os.path
-import sys
-import subprocess
-import signal
-import json
-import datetime
-import traceback
 import httplib
 import ssl
-import threading
-import time
 import socket
-from ConfigParser import SafeConfigParser
 
 from ..config import get_logger
 log = get_logger("virtualchain_session")

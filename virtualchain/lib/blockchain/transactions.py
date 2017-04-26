@@ -21,22 +21,12 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import traceback
+from bitcoin_blockchain import BlockchainDownloader, SPVClient
 
-import sys 
-from bitcoin_blockchain import JSONRPCException, BlockchainDownloader, SPVClient
-
-import logging
 import os
 import time
-import types
 import random
-import copy
-import binascii
-import json
-import pprint
 from decimal import *
-import cPickle as pickle
 
 from ..config import get_logger
 

@@ -33,18 +33,16 @@ import requests
 from StringIO import StringIO
 from decimal import *
 
-import protocoin
 from protocoin.clients import *
 from protocoin.serializers import *
 from protocoin.fields import *
 
 from keys import version_byte as VERSION_BYTE
-from keys import script_hex_to_address
 import bits
 
 from spv import *
 
-from ....lib import encoding, ecdsalib, hashing, merkle
+from ....lib import hashing, merkle
 
 log = logging.getLogger("virtualchain")
 

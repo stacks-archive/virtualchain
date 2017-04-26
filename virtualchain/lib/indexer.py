@@ -22,27 +22,14 @@
 """
 
 
-import argparse
-import logging
 import os
-import os.path
 import sys
-import subprocess
-import signal
 import json
-import datetime
-import httplib
-import ssl
-import threading
-import time
-import socket
 import binascii
 import copy
 import shutil
 import time
 import traceback
-import cPickle as pickle
-import imp
 import simplejson
 
 from .hashing import *
@@ -52,7 +39,6 @@ from collections import defaultdict
 
 import config
 import blockchain.transactions as transactions
-import blockchain.session as session
 
 log = config.get_logger("virtualchain")
  

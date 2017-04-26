@@ -22,25 +22,16 @@
 """
 
 import os
-import sys
 import re
-import time
-import socket
-import types
-import random
 import copy
 import binascii
-import json
 import simplejson
 import keylib
-import struct
-from six import int2byte, b, integer_types, text_type
+from six import int2byte, b, integer_types
 from decimal import *
-import cPickle as pickle
 
-from .keys import version_byte as VERSION_BYTE
 from .keys import script_hex_to_address, address_reencode, is_singlesig, is_multisig, make_payment_script, \
-        calculate_change_amount, btc_script_deserialize, btc_script_serialize
+        btc_script_deserialize, btc_script_serialize
 
 from .opcodes import *
 from ....lib import encoding, ecdsalib, hashing, merkle

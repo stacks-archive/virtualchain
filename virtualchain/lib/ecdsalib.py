@@ -21,13 +21,12 @@
      along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import ecdsa
 from ecdsa import SigningKey, VerifyingKey, SECP256k1
 from ecdsa.util import sigencode_der, sigdecode_der
 from ecdsa import BadSignatureError
 
 import keylib
-from keylib import ECPrivateKey, ECPublicKey
+from keylib import ECPrivateKey 
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -39,7 +38,6 @@ from .config import get_logger
 
 import base64
 import hashlib
-import ecdsa
 
 log = get_logger("virtualchain-ecdsalib")
 
