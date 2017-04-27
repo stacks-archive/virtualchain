@@ -674,8 +674,8 @@ def block_header_serialize( inp ):
         encoding.encode(inp['nonce'], 256, 4)[::-1]
 
     # get (reversed) hash
-    h = hashing.bin_sha256(bin_sha256(o))[::-1].encode('hex')
-    assert h == inp['hash'], (bin_sha256(o).encode('hex'), inp['hash'])
+    h = hashing.bin_sha256(hashing.bin_sha256(o))[::-1].encode('hex')
+    assert h == inp['hash'], (hashing.bin_sha256(o).encode('hex'), inp['hash'])
 
     return o.encode('hex')
 
@@ -725,7 +725,7 @@ def block_verify( block_data ):
     return root_hash == str(block_data['merkleroot'])
 
 
-def tx_output_parse_script( scriptpubkey ):
+def btc_tx_output_parse_script( scriptpubkey ):
     """
     Given the hex representation of a script,
     turn it into a nice, easy-to-read dict.
@@ -739,7 +739,6 @@ def tx_output_parse_script( scriptpubkey ):
     * reqSigs: the number of required signatures (if applicable)
     """
 
-    # TODO: this only handles bitcoin-like scripts at the moment
     script_type = None
     reqSigs = None
     addresses = []
