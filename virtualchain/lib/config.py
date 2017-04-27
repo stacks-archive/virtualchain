@@ -68,7 +68,6 @@ def get_logger(name=None):
 
     if name is None:
         name = "<unknown>"
-        level = logging.CRITICAL
 
     log = logging.getLogger(name=name)
     log.setLevel( level )
