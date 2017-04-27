@@ -83,7 +83,8 @@ class ECVerifier(object):
         Instantiate the verifier with a hex-encoded public key and a base64-encoded signature
         """
         sig_r, sig_s = decode_signature(sigb64)
-        pubk = ec.EllipticCurvePublicNumbers.from_encoded_point(ec.SECP256K1(), pubkey_hex.decode('hex')).public_key(default_backend())
+        pubkey_hex_decompressed = keylib.key_formatting.decompress(pubkey_hex)
+        pubk = ec.EllipticCurvePublicNumbers.from_encoded_point(ec.SECP256K1(), pubkey_hex_decompressed.decode('hex')).public_key(default_backend())
         signature = encode_dss_signature(sig_r, sig_s)
         self.verifier = pubk.verifier(signature, ec.ECDSA(hashes.SHA256()))
 
