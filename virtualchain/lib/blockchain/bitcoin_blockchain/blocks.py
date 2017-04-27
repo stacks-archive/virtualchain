@@ -459,7 +459,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
         dict (i.e. like what bitcoind would give us).
         """
         scriptpubkey = binascii.hexlify( outp.pk_script )
-        script_info = bits.tx_output_parse_script( scriptpubkey )
+        script_info = bits.btc_tx_output_parse_script( scriptpubkey )
         return {
             "value": Decimal(outp.value) / Decimal(10**8),
             "n": i,
