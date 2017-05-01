@@ -84,7 +84,7 @@ PRIVKEY_MULTISIG_SCHEMA = {
 # -testnet/-regtest or mainnet, determine which private
 # and public key classes to use.
 
-if os.environ.get("BLOCKSTACK_TESTNET", None) == "1":
+if os.environ.get("BLOCKSTACK_TESTNET", None) == "1" or os.environ.get("BLOCKSTACK_TESTNET3", None) == "1":
 
     version_byte = 111
     multisig_version_byte = 196
@@ -388,7 +388,7 @@ def address_reencode( address ):
     """
     vb = keylib.b58check.b58check_version_byte( address )
 
-    if os.environ.get("BLOCKSTACK_TESTNET") == "1":
+    if os.environ.get("BLOCKSTACK_TESTNET") == "1" or os.environ.get("BLOCKSTACK_TESTNET3") == "1":
         if vb == 0 or vb == 111:
             # convert to testnet p2pkh
             vb = 111
