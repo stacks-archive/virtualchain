@@ -128,6 +128,23 @@ def ecdsa_private_key(privkey_str=None):
     return ECPrivateKey(privkey_str, compressed=compressed)
 
 
+def set_privkey_compressed(privkey, compressed=True):
+    """
+    Make sure the private key given is compressed or not compressed
+    """
+    assert len(privkey) == 64 or len(privkey) == 66, "BUG: expected 32-byte private key as a hex string"
+
+    # compressed?
+    if compressed and len(privkey) == 64:
+        privkey += '01'
+
+    if not compressed and len(privkey) == 66:
+        assert privkey[-2:] == '01'
+        privkey = privkey[:-2]
+
+    return privkey
+
+
 def get_pubkey_hex( privatekey_hex ):
     """
     Get the uncompressed hex form of a private key
