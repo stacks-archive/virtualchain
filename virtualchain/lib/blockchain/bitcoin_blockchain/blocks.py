@@ -66,7 +66,14 @@ class BlockchainDownloader( BitcoinBasicClient ):
             if p2p_port is None:
                 p2p_port = 8333
         else:
-            self.coin = "bitcoin_testnet"
+            if os.environ.get("BLOCKSTACK_TESTNET3") == "1":
+                # testnet version 3 enabled
+                self.coin = "bitcoin_testnet3"
+
+            else:
+                # regtest 
+                self.coin = "bitcoin_testnet"
+
             if p2p_port is None:
                 p2p_port = 18333
 
