@@ -46,6 +46,7 @@ setup(
         'cryptography>=1.8.1',
         'ecdsa>=0.13',
         'six>=1.10.0',
+        'keylib>=0.1.0',
     ],
     classifiers=[
         'Intended Audience :: Developers',
