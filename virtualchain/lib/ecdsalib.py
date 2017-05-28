@@ -103,11 +103,8 @@ class ECVerifier(object):
         Verify whether or not the public key matches the signature, given the data
         """
         try:
-            res = self.verifier.verify()
-            if res:
-                return True
-            else:
-                return False
+            self.verifier.verify()
+            return True
         except InvalidSignature:
             return False
 
@@ -301,6 +298,9 @@ def verify_digest(hash_hex, pubkey_hex, sigb64, hashfunc=hashlib.sha256):
     Return True if so
     Return False if not
     """
+    # NOTE: this method uses the ecdsa package, not cryptography.
+    # it is much slower, since it's pure Python.
+
     assert isinstance(hash_hex, (str, unicode))
     hash_hex = str(hash_hex)
 
