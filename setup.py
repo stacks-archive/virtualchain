@@ -40,11 +40,13 @@ setup(
     zip_safe=False,
     include_package_data=True,
     install_requires=[
-        'pybitcoin>=0.9.8',
-        'bitcoin>=1.1.42',
-        'utilitybelt>=0.2.6',
         'protocoin>=0.2',
-        'simplejson>=3.8.2'
+        'simplejson>=3.8.2',
+        'jsonschema>=2.5.1',
+        'cryptography>=1.9',
+        'ecdsa>=0.13',
+        'six>=1.10.0',
+        'keylib>=0.1.1',
     ],
     classifiers=[
         'Intended Audience :: Developers',

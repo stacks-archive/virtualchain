@@ -25,6 +25,7 @@
 import os
 import argparse
 from ConfigParser import SafeConfigParser
+import logging
 
 DEBUG = False
 if os.environ.get("BLOCKSTACK_DEBUG") == "1":
@@ -53,6 +54,38 @@ EXPIRATION_PERIOD = BLOCKS_PER_YEAR*1
 AVERAGE_BLOCKS_PER_HOUR = MINUTES_PER_HOUR/AVERAGE_MINUTES_PER_BLOCK
 
 BLOCKS_CONSENSUS_HASH_IS_VALID = 4*AVERAGE_BLOCKS_PER_HOUR
+
+
+def get_logger(name=None):
+    """
+    Get virtualchain's logger
+    """
+
+    level = logging.CRITICAL
+    if DEBUG:
+        logging.disable(logging.NOTSET)
+        level = logging.DEBUG
+
+    if name is None:
+        name = "<unknown>"
+
+    log = logging.getLogger(name=name)
+    log.setLevel( level )
+    console = logging.StreamHandler()
+    console.setLevel( level )
+    log_format = ('[%(asctime)s] [%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + '.%(thread)d) %(message)s' if DEBUG else '%(message)s')
+    formatter = logging.Formatter( log_format )
+    console.setFormatter(formatter)
+    log.propagate = False
+
+    if len(log.handlers) > 0:
+        for i in xrange(0, len(log.handlers)):
+            log.handlers.pop(0)
+    
+    log.addHandler(console)
+    return log
+
+log = get_logger("virtualchain")
 
 
 def get_impl(impl):

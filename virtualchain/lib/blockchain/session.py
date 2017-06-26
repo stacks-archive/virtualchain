@@ -21,33 +21,14 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-
-import argparse
 import logging
 import os
-import os.path
-import sys
-import subprocess
-import signal
-import json
-import datetime
-import traceback
 import httplib
 import ssl
-import threading
-import time
 import socket
-from .bitcoin_blockchain import AuthServiceProxy
-from utilitybelt import is_valid_int
-from ConfigParser import SafeConfigParser
 
-import bitcoin
-
-try:
-   from ..config import DEBUG
-except:
-   # running as an indexer worker
-   from virtualchain.lib.config import DEBUG
+from ..config import get_logger
+log = get_logger("virtualchain_session")
 
 # various SSL compat measures
 create_ssl_authproxy = False 
@@ -61,38 +42,6 @@ if not hasattr( ssl, "create_default_context" ):
    create_ssl_authproxy = False
    do_wrap_socket = True
 
-
-def get_logger(name=None):
-    """
-    Get virtualchain's logger
-    """
-
-    level = logging.CRITICAL
-    if DEBUG:
-        logging.disable(logging.NOTSET)
-        level = logging.DEBUG
-
-    if name is None:
-        name = "<unknown>"
-        level = logging.CRITICAL
-
-    log = logging.getLogger(name=name)
-    log.setLevel( level )
-    console = logging.StreamHandler()
-    console.setLevel( level )
-    log_format = ('[%(asctime)s] [%(levelname)s] [%(module)s:%(lineno)d] (' + str(os.getpid()) + '.%(thread)d) %(message)s' if DEBUG else '%(message)s')
-    formatter = logging.Formatter( log_format )
-    console.setFormatter(formatter)
-    log.propagate = False
-
-    if len(log.handlers) > 0:
-        for i in xrange(0, len(log.handlers)):
-            log.handlers.pop(0)
-    
-    log.addHandler(console)
-    return log
-
-log = get_logger("virtualchain")
 
 # disable debug logging from bitcoinrpc
 bitcoinrpc_logger = logging.getLogger("BitcoinRPC")
@@ -116,7 +65,30 @@ class BitcoindConnection( httplib.HTTPSConnection ):
          self._tunnel()
          
       self.sock = ssl.wrap_socket( sock, cert_reqs=ssl.CERT_NONE )
-      
+
+
+def is_int(i):
+    """
+    Is the given object a long or an int?
+    """
+    return isinstance(i, (int,long))
+
+
+def is_valid_int(i):
+    """
+    Is the given object an integer?
+    """
+    if is_int(i):
+        return True
+    elif isinstance(i, str):
+        try:
+            int_i = int(i)
+        except:
+            return False
+        else:
+            return True
+    return False
+
 
 def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_https, timeout ):
     """
@@ -124,6 +96,8 @@ def create_bitcoind_connection( rpc_username, rpc_password, server, port, use_ht
     It will have ".opts" defined as a member, which will be a dict that stores the above connection options.
     """
     
+    from .bitcoin_blockchain import AuthServiceProxy
+
     global do_wrap_socket, create_ssl_authproxy
         
     log.debug("[%s] Connect to bitcoind at %s://%s@%s:%s, timeout=%s" % (os.getpid(), 'https' if use_https else 'http', rpc_username, server, port, timeout) )

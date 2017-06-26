@@ -20,7 +20,7 @@
     You should have received a copy of the GNU General Public License
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
+from virtualchain import setup_virtualchain, sync_virtualchain, virtualchain_set_opfields, connect_bitcoind
 
 from .lib import *
 from .version import __version__
-from virtualchain import setup_virtualchain, sync_virtualchain, virtualchain_set_opfields, connect_bitcoind

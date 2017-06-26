@@ -21,23 +21,31 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import pybitcoin
-import bitcoin
 import traceback
 import sys
 
-from pybitcoin import opcodes
-
+from .opcodes import *
 from .keys import *
+from .bits import *
 
 import os
+import binascii
+
+def make_multisig_script( pubs, m ):
+    """
+    Make a multisig scriptSig script, as a hex string
+    """
+    return btc_script_serialize( [m] + pubs + [len(pubs)] + [OPCODE_VALUES['OP_CHECKMULTISIG']] )
+    
 
 def make_multisig_info( m, pks ):
     """
     Make a multisig address and redeem script.
     @m of the given @pks must sign.
+
     Return {'address': p2sh address, 'redeem_script': redeem script, 'private_keys': private keys}
-    Return (p2sh address, redeem script)
+    * privkeys will be hex-encoded
+    * redeem_script will be hex-encoded
     """
 
     pubs = []
@@ -50,21 +58,14 @@ def make_multisig_info( m, pks ):
         privkeys.append(priv_hex)
         pubs.append(pub_hex)
 
-    script = bitcoin.mk_multisig_script( pubs, m )
-    addr = bitcoin.p2sh_scriptaddr(script, multisig_version_byte)
+    script = make_multisig_script(pubs, m)
+    addr = btc_make_p2sh_address(script)
 
     return {
         'address': addr,
         'redeem_script': script,
         'private_keys': privkeys
     }
-
-
-def make_multisig_address( redeem_script ):
-    """
-    Make a multisig address (p2sh address)
-    """
-    return bitcoin.p2sh_scriptaddr( redeem_script, multisig_version_byte )
 
 
 def make_multisig_wallet( m, n ):
@@ -95,7 +96,7 @@ def parse_multisig_redeemscript( redeem_script_hex ):
     redeem_script_hex = str(redeem_script_hex)
 
     try:
-        script_parts = bitcoin.deserialize_script( redeem_script_hex )
+        script_parts = btc_script_deserialize(redeem_script_hex)
     except:
         if os.environ.get("BLOCKSTACK_TEST") == "1":
             traceback.print_exc()
@@ -105,7 +106,7 @@ def parse_multisig_redeemscript( redeem_script_hex ):
 
     try:
         assert len(script_parts) > 2
-        assert script_parts[-1] == opcodes.OP_CHECKMULTISIG
+        assert script_parts[-1] == OPCODE_VALUES['OP_CHECKMULTISIG']
         script_parts.pop(-1)
 
         # get n
@@ -139,7 +140,7 @@ def parse_multisig_scriptsig( scriptsig_hex ):
     Return None on error
     """
     try:
-        script_parts = bitcoin.deserialize_script( scriptsig_hex )
+        script_parts = btc_script_deserialize(scriptsig_hex)
     except:
         if os.environ.get("BLOCKSTACK_TEST") == "1":
             traceback.print_exc()

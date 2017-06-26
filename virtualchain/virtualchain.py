@@ -21,24 +21,13 @@
      along with Virtualchain. If not, see <http://www.gnu.org/licenses/>.
 """
 
-import argparse
 import os
-import sys
-import subprocess
-import signal
-import json
 import datetime
-import traceback
-import time
-import random
-import errno
-
-from ConfigParser import SafeConfigParser
 
 from .lib import config, indexer
 from .lib.blockchain import session
 
-log = session.get_logger("virtualchain")
+log = config.get_logger("virtualchain")
 
 # global instance of our implementation's state engine
 state_engine = None
