@@ -146,7 +146,7 @@ def get_pubkey_hex( privatekey_hex ):
     """
     Get the uncompressed hex form of a private key
     """
-    assert isinstance(privatekey_hex, (str, unicode))
+    assert isinstance(privatekey_hex, (str, unicode)), str(type(privatekey_hex))
 
     # remove 'compressed' hint
     if len(privatekey_hex) > 64:
