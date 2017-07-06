@@ -380,39 +380,67 @@ def btc_is_p2sh_script( script_hex ):
         return False
 
 
-def address_reencode( address ):
+def address_reencode( address, blockchain="bitcoin", **blockchain_opts ):
     """
     High-level API call (meant to be blockchain-agnostic)
     Depending on whether or not we're in testnet 
     or mainnet, re-encode an address accordingly.
     """
-    vb = keylib.b58check.b58check_version_byte( address )
+    if blockchain == "bitcoin":
+        # re-encode bitcoin address
+        network = blockchain_opts.get('network', None)
+        vb = keylib.b58check.b58check_version_byte( address )
 
-    if os.environ.get("BLOCKSTACK_TESTNET") == "1" or os.environ.get("BLOCKSTACK_TESTNET3") == "1":
-        if vb == 0 or vb == 111:
-            # convert to testnet p2pkh
-            vb = 111
+        if network == 'mainnet':
+            if vb == 0 or vb == 111:
+                vb = 0
 
-        elif vb == 5 or vb == 196:
-            # convert to testnet p2sh
-            vb = 196
+            elif vb == 5 or vb == 196:
+                vb = 5
+
+            else:
+                raise ValueError("Unrecognized address %s" % address)
+        
+        elif network == 'testnet':
+            if vb == 0 or vb == 111:
+                vb = 111
+            
+            elif vb == 5 or vb == 196:
+                vb = 196
+
+            else:
+                raise ValueError("Unrecognized address %s" % address)
 
         else:
-            raise ValueError("unrecognized address %s" % address)
+            if os.environ.get("BLOCKSTACK_TESTNET") == "1" or os.environ.get("BLOCKSTACK_TESTNET3") == "1":
+                if vb == 0 or vb == 111:
+                    # convert to testnet p2pkh
+                    vb = 111
+
+                elif vb == 5 or vb == 196:
+                    # convert to testnet p2sh
+                    vb = 196
+
+                else:
+                    raise ValueError("unrecognized address %s" % address)
+
+            else:
+                if vb == 0 or vb == 111:
+                    # convert to mainnet p2pkh
+                    vb = 0
+
+                elif vb == 5 or vb == 196:
+                    # convert to mainnet p2sh
+                    vb = 5
+
+                else:
+                    raise ValueError("unrecognized address %s" % address)
+
+        return keylib.b58check.b58check_encode( keylib.b58check.b58check_decode(address), vb )
 
     else:
-        if vb == 0 or vb == 111:
-            # convert to mainnet p2pkh
-            vb = 0
-
-        elif vb == 5 or vb == 196:
-            # convert to mainnet p2sh
-            vb = 5
-
-        else:
-            raise ValueError("unrecognized address %s" % address)
-
-    return keylib.b58check.b58check_encode( keylib.b58check.b58check_decode(address), vb )
+        # not supported
+        raise ValueError("Unsupported blockchain '{}'".format(blockchain))
 
 
 def is_multisig(privkey_info):
