@@ -36,7 +36,14 @@ def make_multisig_script( pubs, m ):
     Make a multisig scriptSig script, as a hex string
     """
     return btc_script_serialize( [m] + pubs + [len(pubs)] + [OPCODE_VALUES['OP_CHECKMULTISIG']] )
-    
+   
+
+def make_multisig_address(pubs, m):
+    """
+    Make a multisig address, given the list of public keys (as hex strings) and the number required for validation
+    """
+    return btc_make_p2sh_address(make_multisig_script(pubs, m))
+
 
 def make_multisig_info( m, pks ):
     """
