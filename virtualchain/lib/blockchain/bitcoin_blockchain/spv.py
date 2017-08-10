@@ -755,6 +755,9 @@ class SPVClient(object):
             # connect 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+            # timeout (10 min)
+            sock.settimeout(600)
+
             bitcoind_port = 8333
             if ":" in bitcoind_server:
                 p = bitcoind_server.split(":")
