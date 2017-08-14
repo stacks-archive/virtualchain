@@ -1,6 +1,6 @@
 # Virtualchain
 
-[![Slack](http://slack.blockstack.org/badge.svg)](http://slack.blockstack.org/)
+[![Slack](https://img.shields.io/badge/join-slack-e32072.svg?style=flat)](http://slack.blockstack.org/)
 
 Virtualchain is a Python library for processing and maintaining virtual blockchains.
 
