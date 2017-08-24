@@ -207,6 +207,23 @@ class BlockchainDownloader( BitcoinBasicClient ):
         return True
 
 
+    def is_segwit_tx(self, tx_hex):
+        """
+        Is the given transaction a segwit transaction?
+        """
+        marker_offset = 5       # 5th byte is the marker byte
+        flag_offset = 6         # 6th byte is the flag byte
+
+        marker_byte_string = tx_hex[2*marker_offset:2*(marker_offset+1)]
+        flag_byte_string = tx_hex[2*flag_offset:2*(flag_offset+1)]
+
+        if marker_byte_string == '00' and flag_byte_string != '00':
+            # segwit (per BIP144)
+            return True
+        else:
+            return False
+
+
     def fetch_sender_txs(self):
         """
         Fetch all sender txs via JSON-RPC,
@@ -740,6 +757,12 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
                 txhex = resp['result']
                 assert txhex is not None, "Invalid RPC response '%s' (for %s)" % (simplejson.dumps(resp), txids[resp['id']])
+
+                if self.is_segwit_tx(txhex):
+                    log.error("FATAL: SegWit transaction detected!  Virtualchain is not yet compatible with SegWit-formatted transactions.")
+                    log.error("Please ensure your bitcoind node has `rpcserialversion=0` set.")
+                    log.error("Aborting...")
+                    os.abort()
 
                 try:
 
