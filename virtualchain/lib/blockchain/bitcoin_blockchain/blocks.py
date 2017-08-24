@@ -211,9 +211,9 @@ class BlockchainDownloader( BitcoinBasicClient ):
         """
         Is the given transaction a segwit transaction?
         """
-        marker_offset = 5       # 5th byte is the marker byte
-        flag_offset = 6         # 6th byte is the flag byte
-
+        marker_offset = 4       # 5th byte is the marker byte
+        flag_offset = 5         # 6th byte is the flag byte
+        
         marker_byte_string = tx_hex[2*marker_offset:2*(marker_offset+1)]
         flag_byte_string = tx_hex[2*flag_offset:2*(flag_offset+1)]
 
