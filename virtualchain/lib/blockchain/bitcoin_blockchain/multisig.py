@@ -45,7 +45,7 @@ def make_multisig_address(pubs, m):
     return btc_make_p2sh_address(make_multisig_script(pubs, m))
 
 
-def make_multisig_info( m, pks ):
+def make_multisig_info( m, pks, compressed=None ):
     """
     Make a multisig address and redeem script.
     @m of the given @pks must sign.
@@ -58,7 +58,12 @@ def make_multisig_info( m, pks ):
     pubs = []
     privkeys = []
     for pk in pks:
-        priv = BitcoinPrivateKey(pk)
+        priv = None
+        if compressed in [True, False]:
+            priv = BitcoinPrivateKey(pk, compressed=compressed)
+        else:
+            priv = BitcoinPrivateKey(pk)
+
         priv_hex = priv.to_hex()
         pub_hex = priv.public_key().to_hex()
 
