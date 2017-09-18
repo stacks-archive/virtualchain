@@ -80,10 +80,11 @@ def EncodeDecimal(o):
 class AuthServiceProxy(object):
     __id_count = 0
 
-    def __init__(self, service_url, service_name=None, timeout=HTTP_TIMEOUT, connection=None):
+    def __init__(self, service_url, service_name=None, timeout=HTTP_TIMEOUT, connection=None, legacy=False):
         self.__service_url = service_url
         self.__service_name = service_name
         self.__url = urlparse.urlparse(service_url)
+        self.__legacy = legacy
         if self.__url.port is None:
             port = 80
         else:
@@ -116,9 +117,12 @@ class AuthServiceProxy(object):
         if name.startswith('__') and name.endswith('__'):
             # Python internal stuff
             raise AttributeError
+        if name == 'getinfo' and not self.__legacy:
+            return self.getinfo
         if self.__service_name is not None:
             name = "%s.%s" % (self.__service_name, name)
         return AuthServiceProxy(self.__service_url, name, self.__timeout, self.__conn)
+
 
     def __call__(self, *args):
         AuthServiceProxy.__id_count += 1
@@ -144,6 +148,7 @@ class AuthServiceProxy(object):
                 'code': -343, 'message': 'missing JSON-RPC result'})
         
         return response['result']
+
 
     def batch_(self, rpc_calls):
         """Batch RPC call.
@@ -175,6 +180,7 @@ class AuthServiceProxy(object):
                 results.append(response['result'])
         return results
 
+
     def _get_response(self):
         http_response = self.__conn.getresponse()
         if http_response is None:
@@ -193,4 +199,48 @@ class AuthServiceProxy(object):
         else:
             log.debug("<-- "+responsedata)
         return response
+
+
+    def getinfo(self):
+        """
+        Backwards-compatibility for 0.14 and later
+        """
+        try:
+            old_getinfo = AuthServiceProxy(self.__service_url, 'getinfo', self.__timeout, self.__conn, True)
+            res = old_getinfo()
+            if 'error' not in res:
+                # 0.13 and earlier
+                return res
+
+        except JSONRPCException:
+            pass
+
+        network_info = self.getnetworkinfo()
+        wallet_info = self.getwalletinfo()
+        blockchain_info = self.getblockchaininfo()
+
+        res = {
+            'version': network_info['version'],
+            'protocolversion': network_info['protocolversion'],
+            'walletversion': wallet_info['walletversion'],
+            'balance': wallet_info['balance'],
+            'blocks': blockchain_info['blocks'],
+            'timeoffset': network_info['timeoffset'],
+            'connections': network_info['connections'],
+            'proxy': network_info['networks'],
+            'difficulty': blockchain_info['difficulty'],
+            'testnet': blockchain_info['chain'] == 'testnet',
+            'keypoololdest': wallet_info['keypoololdest'],
+            'keypoolsize': wallet_info['keypoolsize'],
+            'paytxfee': wallet_info['paytxfee'],
+            'errors': network_info['warnings'],
+        }
+        
+        for k in ['unlocked_until', 'relayfee', 'paytxfee']:
+            if wallet_info.has_key(k):
+                res[k] = wallet_info[k]
+
+        return res
+
+
 
