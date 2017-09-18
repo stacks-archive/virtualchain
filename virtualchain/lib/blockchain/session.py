@@ -27,7 +27,8 @@ import httplib
 import ssl
 import socket
 
-from ..config import get_logger
+from ..config import get_logger, get_bitcoind_config
+
 log = get_logger("virtualchain_session")
 
 # various SSL compat measures
@@ -176,4 +177,19 @@ def connect_bitcoind_impl( bitcoind_opts ):
                                        bitcoind_opts['bitcoind_server'], int(bitcoind_opts['bitcoind_port']), \
                                        bitcoind_opts.get('bitcoind_use_https', False), float(bitcoind_opts.get('bitcoind_timeout', 300)) )
  
+
+def get_bitcoind_client(config_path=None, bitcoind_opts=None):
+    """
+    Connect to bitcoind
+    """
+    if bitcoind_opts is None and config_path is None:
+        raise ValueError("Need bitcoind opts or config path")
+
+    bitcoind_opts = get_bitcoind_config(config_file=config_path)
+    log.debug("Connect to bitcoind at %s:%s (%s)" % (bitcoind_opts['bitcoind_server'], bitcoind_opts['bitcoind_port'], config_path))
+    client = connect_bitcoind_impl( bitcoind_opts )
+
+    return client
+ 
+
 
