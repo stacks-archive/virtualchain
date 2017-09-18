@@ -27,22 +27,44 @@ import sys
 from .opcodes import *
 from .keys import *
 from .bits import *
+from ....lib import hashing
+from ....lib.config import get_logger
 
 import os
 import binascii
 
+log = get_logger('virtualchain')
+
 def make_multisig_script( pubs, m ):
     """
-    Make a multisig scriptSig script, as a hex string
+    Make a multisig scriptSig/witness script, as a hex string
     """
     return btc_script_serialize( [m] + pubs + [len(pubs)] + [OPCODE_VALUES['OP_CHECKMULTISIG']] )
    
 
 def make_multisig_address(pubs, m):
     """
-    Make a multisig address, given the list of public keys (as hex strings) and the number required for validation
+    Make a multisig (p2sh) address, given the list of public keys (as hex strings) and the number required for validation
     """
     return btc_make_p2sh_address(make_multisig_script(pubs, m))
+
+
+def make_multisig_segwit_address(pubs, m):
+    """
+    make an address for p2sh-p2wsh multisig
+    """
+    script = make_multisig_script(pubs, m)
+    return make_multisig_segwit_address_from_witness_script(script)
+
+
+def make_multisig_segwit_address_from_witness_script(script):
+    """
+    multisig witness script (p2sh-p2wsh) to address
+    """
+    script_hash = hashing.bin_sha256(script.decode('hex')).encode('hex')
+    scriptsig_script = '0020' + script_hash
+    addr = btc_make_p2sh_address(scriptsig_script)
+    return addr
 
 
 def make_multisig_info( m, pks, compressed=None ):
@@ -50,7 +72,7 @@ def make_multisig_info( m, pks, compressed=None ):
     Make a multisig address and redeem script.
     @m of the given @pks must sign.
 
-    Return {'address': p2sh address, 'redeem_script': redeem script, 'private_keys': private keys}
+    Return {'address': p2sh address, 'redeem_script': redeem script, 'private_keys': private keys, 'segwit': False}
     * privkeys will be hex-encoded
     * redeem_script will be hex-encoded
     """
@@ -76,8 +98,59 @@ def make_multisig_info( m, pks, compressed=None ):
     return {
         'address': addr,
         'redeem_script': script,
-        'private_keys': privkeys
+        'private_keys': privkeys,
+        'segwit': False,
     }
+
+
+def make_multisig_segwit_info( m, pks ):
+    """
+    Make either a p2sh-p2wpkh or p2sh-p2wsh
+    redeem script and p2sh address.
+
+    Return {'address': p2sh address, 'redeem_script': **the witness script**, 'private_keys': privkeys, 'segwit': True}
+    * privkeys and redeem_script will be hex-encoded
+    """
+    pubs = []
+    privkeys = []
+    for pk in pks:
+        priv = BitcoinPrivateKey(pk, compressed=True)
+        priv_hex = priv.to_hex()
+        pub_hex = priv.public_key().to_hex()
+
+        privkeys.append(priv_hex)
+        pubs.append(keylib.key_formatting.compress(pub_hex))
+
+    script = None
+
+    if len(pubs) == 1:
+        if m != 1:
+            raise ValueError("invalid m: len(pubkeys) == 1")
+
+        # 1 pubkey means p2wpkh
+        key_hash = hashing.bin_hash160(pubs[0].decode('hex')).encode('hex')
+        script = '0014' + key_hash
+        addr = btc_make_p2sh_address(script)
+
+    else:
+        # 2+ pubkeys means p2wsh 
+        script = make_multisig_script(pubs, m)
+        addr = make_multisig_segwit_address_from_witness_script(script)
+
+    return {
+        'address': addr,
+        'redeem_script': script,
+        'private_keys': privkeys,
+        'segwit': True,
+    }
+
+
+def make_segwit_info(privkey):
+    """
+    Make a p2sh-p2wpkh wallet
+    Return {'address': p2sh address, 'redeem_script': **the witness script**, 'private_keys': privkeys, 'segwit': True}
+    """
+    return make_multisig_segwit_info(1, [privkey])
 
 
 def make_multisig_wallet( m, n ):
@@ -98,6 +171,33 @@ def make_multisig_wallet( m, n ):
     return make_multisig_info( m, pks )
 
 
+def make_segwit_info(privkey=None):
+    """
+    Create a bundle of information
+    that can be used to generate
+    a p2sh-p2wpkh transaction
+    """
+
+    if privkey is None:
+        privkey = BitcoinPrivateKey(compressed=True).to_wif()
+
+    return make_multisig_segwit_info(1, [privkey])
+
+
+def make_multisig_segwit_wallet( m, n ):
+    """
+    Create a bundle of information
+    that can be used to generate an
+    m-of-n multisig witness script.
+    """
+    pks = []
+    for i in xrange(0, n):
+        pk = BitcoinPrivateKey(compressed=True).to_wif()
+        pks.append(pk)
+
+    return make_multisig_segwit_info(m, [pks])
+
+
 def parse_multisig_redeemscript( redeem_script_hex ):
     """
     Given a redeem script (as hex), extract multisig information.
@@ -112,8 +212,8 @@ def parse_multisig_redeemscript( redeem_script_hex ):
     except:
         if os.environ.get("BLOCKSTACK_TEST") == "1":
             traceback.print_exc()
-            print >> sys.stderr, "Invalid redeem script %s" % redeem_script_hex
 
+        log.error("Invalid redeem script %s" % redeem_script_hex)
         return None, None
 
     try:
@@ -140,8 +240,8 @@ def parse_multisig_redeemscript( redeem_script_hex ):
     except Exception, e:
         if os.environ.get("BLOCKSTACK_TEST") == "1":
             traceback.print_exc()
-            print >> sys.stderr, "Invalid redeem script %s (parses to %s)" % (redeem_script_hex, script_parts)
 
+        log.error("Invalid redeem script %s (parses to %s)" % (redeem_script_hex, script_parts))
         return (None, None)
 
 
