@@ -27,9 +27,11 @@ import binascii
 import jsonschema
 import re
 from opcodes import *
+from bech32 import *
 from jsonschema import ValidationError
 
 from ....lib import hashing, encoding, ecdsalib
+from ....lib.config import get_features
 
 MAX_DATA_LEN = 40       # 40 bytes per data output
 
@@ -71,6 +73,9 @@ PRIVKEY_MULTISIG_SCHEMA = {
             'type': 'array',
             'items': PRIVKEY_SINGLESIG_SCHEMA
         },
+        'segwit': {
+            'type': 'boolean'
+        },
     },
     'required': [
         'address',
@@ -110,18 +115,22 @@ else:
 
 
 def bin_hash160_to_address(bin_hash160, version_byte=version_byte):
+    # b58 addresses only!
     return keylib.b58check.b58check_encode(bin_hash160, version_byte=version_byte)
 
 
 def hex_hash160_to_address(hash160, version_byte=version_byte):
+    # b58 addresses only!
     return bin_hash160_to_address(binascii.unhexlify(hash160), version_byte=version_byte)
 
 
 def address_to_bin_hash160(address):
+    # b58 addresses only!
     return keylib.b58check.b58check_decode(address)
 
 
 def address_to_hex_hash160(address):
+    # b58 addresses only!
     return binascii.hexlify(address_to_bin_hash160(address))
 
 
@@ -135,7 +144,8 @@ def btc_script_to_hex(script):
     for part in parts:
         if part[0:3] == 'OP_':
             value = OPCODE_VALUES.get(part)
-            assert value, "Unrecognized opcode {}".format(part)
+            if not value:
+                raise ValueError("Unrecognized opcode {}".format(part))
 
             hex_script += "%0.2x" % value
 
@@ -231,23 +241,23 @@ def _btc_script_serialize_unit(unit):
     else:
         if len(unit) <= 75:
             # length + payload
-            return encoding.from_int_to_byte(len(unit))+unit
+            return encoding.from_int_to_byte(len(unit)) + unit
 
         elif len(unit) < 256:
             # OP_PUSHDATA1 + length (1 byte) + payload
-            return encoding.from_int_to_byte(76) + encoding.from_int_to_byte(len(unit)) + unit
+            return encoding.from_int_to_byte(OPCODE_VALUES['OP_PUSHDATA1']) + encoding.from_int_to_byte(len(unit)) + unit
 
         elif len(unit) < 65536:
             # OP_PUSHDATA2 + length (2 bytes, big-endian) + payload
-            return encoding.from_int_to_byte(77) + encoding.encode(len(unit), 256, 2)[::-1] + unit
+            return encoding.from_int_to_byte(OPCODE_VALUES['OP_PUSHDATA2']) + encoding.encode(len(unit), 256, 2)[::-1] + unit
         else:
             # OP_PUSHDATA4 + length (4 bytes, big-endian) + payload
-            return encoding.from_int_to_byte(78) + encoding.encode(len(unit), 256, 4)[::-1] + unit
+            return encoding.from_int_to_byte(OPCODE_VALUES['OP_PUSHDATA4']) + encoding.encode(len(unit), 256, 4)[::-1] + unit
 
 
 def btc_script_serialize(_script):
     """
-    Given a deserialized script (i.e. an array of ints and strings), or an existing script,
+    Given a deserialized script (i.e. an array of Nones, ints, and strings), or an existing script,
     turn it back into a hex script
 
     Based on code from pybitcointools (https://github.com/vbuterin/pybitcointools)
@@ -262,29 +272,54 @@ def btc_script_serialize(_script):
     return encoding.safe_hexlify( ''.join(map(_btc_script_serialize_unit, script)) )
 
 
-def make_payment_script( address ):
+def make_payment_script( address, segwit=None ):
     """
     High-level API call (meant to be blockchain agnostic)
     Make a pay-to-address script.
-    * If the address is a pubkey hash, then make a p2pkh script.
-    * If the address is a script hash, then make a p2sh script.
     """
-    vb = keylib.b58check.b58check_version_byte(address)
+    
+    if segwit is None:
+        segwit = get_features('segwit')
 
-    if vb == version_byte:
-        hash160 = binascii.hexlify( keylib.b58check.b58check_decode(address) )
-        script = 'OP_DUP OP_HASH160 {} OP_EQUALVERIFY OP_CHECKSIG'.format(hash160)
-        script_hex = btc_script_to_hex(script)
-        return script_hex
+    # is address bech32-encoded?
+    witver, withash = segwit_addr_decode(address)
+    if witver is not None and withash is not None:
+        # bech32 segwit address
+        if not segwit:
+            raise ValueError("Segwit is disabled")
 
-    elif vb == multisig_version_byte:
-        hash160 = binascii.hexlify( keylib.b58check.b58check_decode(address) )
-        script = 'OP_HASH160 {} OP_EQUAL'.format(hash160)
-        script_hex = btc_script_to_hex(script)
-        return script_hex
+        if len(withash) == 20:
+            # p2wpkh
+            script_hex = '00' + withash.encode('hex')
+            return script_hex
+            
+        elif len(withash) == 32:
+            # p2wsh
+            script_hex = '00' + withash.encode('hex')
+            return script_hex
+
+        else:
+            raise ValueError("Unrecognized address '%s'" % address )
 
     else:
-        raise ValueError("Unrecognized address '%s'" % address )
+        # address is b58check-encoded
+        vb = keylib.b58check.b58check_version_byte(address)
+        if vb == version_byte:
+            # p2pkh
+            hash160 = binascii.hexlify( keylib.b58check.b58check_decode(address) )
+            script = 'OP_DUP OP_HASH160 {} OP_EQUALVERIFY OP_CHECKSIG'.format(hash160)
+            script_hex = btc_script_to_hex(script)
+            return script_hex
+
+        elif vb == multisig_version_byte:
+            # p2sh
+            hash160 = binascii.hexlify( keylib.b58check.b58check_decode(address) )
+            script = 'OP_HASH160 {} OP_EQUAL'.format(hash160)
+            script_hex = btc_script_to_hex(script)
+            return script_hex
+
+        else:
+            raise ValueError("Unrecognized address '%s'" % address )
 
 
 def make_data_script( data ):
@@ -294,8 +329,12 @@ def make_data_script( data ):
     Data must be a hex string
     Returns a hex string.
     """
-    assert len(data) < MAX_DATA_LEN * 2, "Data hex string is too long"     # note: data is a hex string
-    assert len(data) % 2 == 0, "Data hex string is not even length"
+    if len(data) >= MAX_DATA_LEN * 2:
+        raise ValueError("Data hex string is too long")     # note: data is a hex string
+
+    if len(data) % 2 != 0:
+        raise ValueError("Data hex string is not even length")
+
     return "6a{:02x}{}".format(len(data)/2, data)
 
 
@@ -318,7 +357,7 @@ def calculate_change_amount(inputs, send_amount, fee):
     return change_amount
 
 
-def script_hex_to_address( script_hex ):
+def script_hex_to_address( script_hex, segwit=None ):
     """
     High-level API call (meant to be blockchain agnostic)
     Examine a script (hex-encoded) and extract an address.
@@ -336,6 +375,16 @@ def script_hex_to_address( script_hex ):
         hash160_bin = binascii.unhexlify(script_hex[4:-2])
         return bin_hash160_to_address(hash160_bin, version_byte=multisig_version_byte)
 
+    elif script_hex.startswith('00') and len(script_hex) == 44:
+        # p2wpkh script (bech32 address)
+        hash160_bin = binascii.unhexlify(script_hex[2:])
+        return segwit_addr_encode(hash160_bin) 
+
+    elif script_hex.startswith('00') and len(script_hex) == 66:
+        # p2wsh script (bech32 address)
+        sha256_bin = binascii.unhexlify(script_hex[2:])
+        return segwit_addr_encode(sha256_bin)
+
     return None
 
 
@@ -346,6 +395,59 @@ def btc_make_p2sh_address( script_hex ):
     h = hashing.bin_hash160(binascii.unhexlify(script_hex))
     addr = bin_hash160_to_address(h, version_byte=multisig_version_byte)
     return addr
+
+
+def btc_make_p2wpkh_address( pubkey_hex ):
+    """
+    Make a p2wpkh address from a hex pubkey
+    """
+    pubkey_hex = keylib.key_formatting.compress(pubkey_hex)
+    hash160_bin = hashing.bin_hash160(pubkey_hex.decode('hex'))
+    return segwit_addr_encode(hash160_bin)
+
+
+def btc_make_p2sh_p2wpkh_redeem_script( pubkey_hex ):
+    """
+    Make the redeem script for a p2sh-p2wpkh witness script
+    """
+    pubkey_hash = hashing.bin_hash160(pubkey_hex.decode('hex')).encode('hex')
+    redeem_script = btc_script_serialize(['0014' + pubkey_hash])
+    return redeem_script
+
+
+def btc_make_p2sh_p2wpkh_address( witness_script_hex ):
+    """
+    Make a p2sh address for a p2wpkh witness script hex
+    """
+    redeem_script = btc_make_p2sh_p2wpkh_redeem_script(witness_script_hex)
+    p2sh_addr = btc_make_p2sh_address(redeem_script)
+    return p2sh_addr
+
+
+def btc_make_p2wsh_address( witness_script_hex ):
+    """
+    Make a p2wsh address from a witness script
+    """
+    witness_hash_bin = hashing.bin_sha256(witness_script_hex.decode('hex'))
+    return segwit_addr_encode(witness_hash_bin)
+
+
+def btc_make_p2sh_p2wsh_redeem_script( witness_script_hex ):
+    """
+    Make the redeem script for a p2sh-p2wsh witness script
+    """
+    witness_script_hash = hashing.bin_sha256(witness_script_hex.decode('hex')).encode('hex')
+    redeem_script = btc_script_serialize(['0020' + witness_script_hash])
+    return redeem_script
+
+
+def btc_make_p2sh_p2wsh_address( witness_script_hex ):
+    """
+    Make a p2sh address for a p2wsh witness script hex
+    """
+    redeem_script = btc_make_p2sh_p2wsh_redeem_script(witness_script_hex)
+    p2sh_addr = btc_make_p2sh_address(redeem_script)
+    return p2sh_addr
 
 
 def btc_is_p2sh_address( address ):
@@ -370,9 +472,44 @@ def btc_is_p2pkh_address( address ):
         return False
 
 
+def btc_is_p2wpkh_address( address ):
+    """
+    Is the given address a p2wpkh address?
+    """
+    wver, whash = segwit_addr_decode(address)
+    if whash is None:
+        return False
+
+    if len(whash) != 20:
+        return False
+
+    return True
+
+
+def btc_is_p2wsh_address( address ):
+    """
+    Is the given address a p2wsh address?
+    """
+    wver, whash = segwit_addr_decode(address)
+    if whash is None:
+        return False
+    
+    if len(whash) != 32:
+        return False
+
+    return True
+
+
+def btc_is_segwit_address(address):
+    """
+    Is the given address a segwit (bech32) address?
+    """
+    return btc_is_p2wpkh_address(address) or btc_is_p2wsh_address(address)
+
+
 def btc_is_p2sh_script( script_hex ):
     """
-    Is the given script a p2sh script?
+    Is the given scriptpubkey a p2sh script?
     """
     if script_hex.startswith("a914") and script_hex.endswith("87") and len(script_hex) == 46:
         return True
@@ -380,15 +517,46 @@ def btc_is_p2sh_script( script_hex ):
         return False
 
 
-def address_reencode( address, blockchain="bitcoin", **blockchain_opts ):
+def btc_is_p2wsh_script( script_hex ):
+    """
+    Is the given scriptpubkey a p2wsh script?
+    """
+    if script_hex.startswith('00') and len(script_hex) == 66:
+        return True
+    else:
+        return False
+
+
+def address_reencode( address, **blockchain_opts ):
     """
     High-level API call (meant to be blockchain-agnostic)
     Depending on whether or not we're in testnet 
     or mainnet, re-encode an address accordingly.
     """
-    if blockchain == "bitcoin":
-        # re-encode bitcoin address
-        network = blockchain_opts.get('network', None)
+    # re-encode bitcoin address
+    network = blockchain_opts.get('network', None)
+
+    if btc_is_segwit_address(address):
+        # bech32 address
+        hrp = None
+        if network == 'mainnet':
+            hrp = 'bt'
+
+        elif network == 'testnet':
+            hrp = 'tb'
+
+        else:
+            if os.environ.get('BLOCKSTACK_TESTNET') == '1' or os.environ.get('BLOCKSTACK_TESTNET3') == '1':
+                hrp = 'tb'
+
+            else:
+                hrp = 'bt'
+
+        wver, whash = segwit_addr_decode(address)
+        return segwit_addr_encode(whash, hrp=hrp, witver=wver)
+
+    else:
+        # base58 address
         vb = keylib.b58check.b58check_version_byte( address )
 
         if network == 'mainnet':
@@ -438,20 +606,36 @@ def address_reencode( address, blockchain="bitcoin", **blockchain_opts ):
 
         return keylib.b58check.b58check_encode( keylib.b58check.b58check_decode(address), vb )
 
-    else:
-        # not supported
-        raise ValueError("Unsupported blockchain '{}'".format(blockchain))
-
 
 def is_multisig(privkey_info):
     """
     High-level API call (meant to be blockchain agnostic)
     Does the given private key info represent
     a multisig bundle?
+
+    For Bitcoin, this is true for multisig p2sh (not p2sh-p2wsh)
     """
     try:
         jsonschema.validate(privkey_info, PRIVKEY_MULTISIG_SCHEMA)
-        return True
+        return not privkey_info.get('segwit', False)
+    except ValidationError as e:
+        return False
+
+
+def btc_is_multisig_segwit(privkey_info):
+    """
+    High-level API call (meant to be blockchain agnostic)
+    Does the given private key info represent
+    a multisig bundle?
+
+    For Bitcoin, this is true for multisig p2sh (not p2sh-p2wsh)
+    """
+    try:
+        jsonschema.validate(privkey_info, PRIVKEY_MULTISIG_SCHEMA)
+        if len(privkey_info['private_keys']) == 1:
+            return False
+
+        return privkey_info.get('segwit', False)
     except ValidationError as e:
         return False
 
@@ -461,7 +645,7 @@ def is_multisig_address(addr):
     High-level API call (meant to be blockchain agnostic)
     Is the given address a multisig address?
     """
-    return btc_is_p2sh_address(addr)
+    return btc_is_p2sh_address(addr) or btc_is_p2wsh_address(addr)
 
 
 def is_multisig_script(script_hex):
@@ -469,7 +653,7 @@ def is_multisig_script(script_hex):
     High-level API call (meant to be blockchain-agnostic)
     Is the given script hex a multisig script?
     """
-    return btc_is_p2sh_script(script_hex)
+    return btc_is_p2sh_script(script_hex) or btc_is_p2wsh_script(script_hex)
 
 
 def is_singlesig(privkey_info):
@@ -477,6 +661,8 @@ def is_singlesig(privkey_info):
     High-level API call (meant to be blockchain agnostic)
     Does the given private key info represent
     a single signature bundle? (i.e. one private key)?
+
+    i.e. is this key a private key string?
     """
     try:
         jsonschema.validate(privkey_info, PRIVKEY_SINGLESIG_SCHEMA)
@@ -485,12 +671,40 @@ def is_singlesig(privkey_info):
         return False
 
 
+def get_singlesig_privkey(privkey_info):
+    """
+    High-level API call (meant to be blockchain agnostic)
+    Get the single-sig private key from the private key info
+    """
+    if is_singlesig(privkey_info):
+        return privkey_info
+
+    elif btc_is_singlesig_segwit(privkey_info):
+        return privkey_info['private_keys'][0]
+
+    return None
+
+
 def is_singlesig_address(addr):
     """
     High-level API call (meant to be blockchain agnostic)
     Is the given address a single-sig address?
     """
     return btc_is_p2pkh_address(addr)
+
+
+def btc_is_singlesig_segwit(privkey_info):
+    """
+    Is the given key bundle a p2sh-p2wpkh key bundle?
+    """
+    try:
+        jsonschema.validate(privkey_info, PRIVKEY_MULTISIG_SCHEMA)
+        if len(privkey_info['private_keys']) > 1:
+            return False
+
+        return privkey_info.get('segwit', False)
+    except ValidationError:
+        return False
 
 
 def get_privkey_address(privkey_info):
@@ -502,12 +716,17 @@ def get_privkey_address(privkey_info):
     Return the address on success
     Raise exception on error
     """
+    
+    from .multisig import make_multisig_segwit_address_from_witness_script
 
     if is_singlesig(privkey_info):
         return address_reencode( ecdsalib.ecdsa_private_key(privkey_info).public_key().address() )
     
-    if is_multisig(privkey_info):
+    if is_multisig(privkey_info) or btc_is_singlesig_segwit(privkey_info):
         redeem_script = str(privkey_info['redeem_script'])
         return btc_make_p2sh_address(redeem_script)
+    
+    if btc_is_multisig_segwit(privkey_info):
+        return make_multisig_segwit_address_from_witness_script(str(privkey_info['redeem_script']))
 
     raise ValueError("Invalid private key info")
