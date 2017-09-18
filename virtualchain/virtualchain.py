@@ -112,7 +112,6 @@ def connect_bitcoind( opts ):
     to by the environment variable
     VIRTUALCHAIN_MOD_CONNECT_BLOCKCHAIN.
     """
-    # connect_bitcoind_factory = workpool.multiprocess_connect_bitcoind()
     connect_bitcoind_factory = session.connect_bitcoind_impl
     return connect_bitcoind_factory( opts )
 
