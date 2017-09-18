@@ -116,7 +116,9 @@ def ecdsa_private_key(privkey_str=None):
     """
     compressed = False
     if privkey_str is not None:
-        assert isinstance(privkey_str, (str, unicode))
+        if not isinstance(privkey_str, (str, unicode)):
+            raise ValueError("Private key is not a string")
+
         privkey_str = str(privkey_str)
 
     if privkey_str is None or keylib.key_formatting.get_privkey_format(privkey_str).endswith('compressed'):
@@ -129,14 +131,17 @@ def set_privkey_compressed(privkey, compressed=True):
     """
     Make sure the private key given is compressed or not compressed
     """
-    assert len(privkey) == 64 or len(privkey) == 66, "BUG: expected 32-byte private key as a hex string"
+    if len(privkey) != 64 and len(privkey) != 66:
+        raise ValueError("expected 32-byte private key as a hex string")
 
     # compressed?
     if compressed and len(privkey) == 64:
         privkey += '01'
 
     if not compressed and len(privkey) == 66:
-        assert privkey[-2:] == '01'
+        if privkey[-2:] != '01':
+            raise ValueError("private key does not end in '01'")
+
         privkey = privkey[:-2]
 
     return privkey
@@ -146,11 +151,14 @@ def get_pubkey_hex( privatekey_hex ):
     """
     Get the uncompressed hex form of a private key
     """
-    assert isinstance(privatekey_hex, (str, unicode)), str(type(privatekey_hex))
+    if not isinstance(privatekey_hex, (str, unicode)):
+        raise ValueError("private key is not a hex string but {}".format(str(type(privatekey_hex))))
 
     # remove 'compressed' hint
     if len(privatekey_hex) > 64:
-        assert privatekey_hex[-2:] == '01'
+        if privatekey_hex[-2:] != '01':
+            raise ValueError("private key does not end in 01")
+
         privatekey_hex = privatekey_hex[:64]
 
     # get hex public key
@@ -169,14 +177,17 @@ def get_uncompressed_private_and_public_keys( privkey_str ):
     Get the private and public keys from a private key string.
     Make sure the both are *uncompressed*
     """
-    assert isinstance(privkey_str, (str, unicode))
+    if not isinstance(privkey_str, (str, unicode)):
+        raise ValueError("private key given is not a string")
 
     pk = ecdsa_private_key(str(privkey_str))
     pk_hex = pk.to_hex()
 
     # force uncompressed
     if len(pk_hex) > 64:
-        assert pk_hex[-2:] == '01'
+        if pk_hex[-2:] != '01':
+            raise ValueError("private key does not end in '01'")
+
         pk_hex = pk_hex[:64]
 
     pubk_hex = ecdsa_private_key(pk_hex).public_key().to_hex()
@@ -187,12 +198,15 @@ def decode_privkey_hex(privkey_hex):
     """
     Decode a private key for ecdsa signature
     """
-    assert isinstance(privkey_hex, (str, unicode))
+    if not isinstance(privkey_hex, (str, unicode)):
+        raise ValueError("private key is not a string")
 
     # force uncompressed
     priv = str(privkey_hex)
     if len(priv) > 64:
-        assert priv[-2:] == '01'
+        if priv[-2:] != '01':
+            raise ValueError("private key does not end in '01'")
+
         priv = priv[:64]
 
     pk_i = int(priv, 16)
@@ -203,7 +217,8 @@ def decode_pubkey_hex(pubkey_hex):
     """
     Decode a public key for ecdsa verification
     """
-    assert isinstance(pubkey_hex, (str, unicode))
+    if not isinstance(pubkey_hex, (str, unicode)):
+        raise ValueError("public key is not a string")
 
     pubk = str(pubkey_hex)
     if keylib.key_formatting.get_pubkey_format(pubk) == 'hex_compressed':
@@ -237,7 +252,8 @@ def decode_signature(sigb64):
     Decode a signature into r, s
     """
     sig_bin = base64.b64decode(sigb64)
-    assert len(sig_bin) == 64
+    if len(sig_bin) != 64:
+        raise ValueError("Invalid base64 signature")
 
     sig_hex = sig_bin.encode('hex')
     sig_r = int(sig_hex[:64], 16)
@@ -250,7 +266,9 @@ def sign_raw_data(raw_data, privatekey_hex):
     Sign a string of data.
     Returns signature as a base64 string
     """
-    assert isinstance(raw_data, (str, unicode))
+    if not isinstance(raw_data, (str, unicode)):
+        raise ValueError("Data is not a string")
+
     raw_data = str(raw_data)
 
     si = ECSigner(privatekey_hex)
@@ -265,7 +283,9 @@ def verify_raw_data(raw_data, pubkey_hex, sigb64):
     Return True on success.
     Return False on error.
     """
-    assert isinstance(raw_data, (str, unicode))
+    if not isinstance(raw_data, (str, unicode)):
+        raise ValueError("data is not a string")
+
     raw_data = str(raw_data)
 
     vi = ECVerifier(pubkey_hex, sigb64)
@@ -278,13 +298,15 @@ def sign_digest(hash_hex, privkey_hex, hashfunc=hashlib.sha256):
     Given a digest and a private key, sign it.
     Return the base64-encoded signature
     """
-    assert isinstance(hash_hex, (str, unicode))
+    if not isinstance(hash_hex, (str, unicode)):
+        raise ValueError("hash hex is not a string")
+
     hash_hex = str(hash_hex)
 
     pk_uncompressed_hex, pubk_uncompressed_hex = get_uncompressed_private_and_public_keys(privkey_hex)
 
     sk = SigningKey.from_string(pk_uncompressed_hex.decode('hex'), curve=SECP256k1)
-    sig_bin = sk.sign_digest(hash_hex.decode('hex'), sigencode=sigencode_der)
+    sig_bin = sk.sign_digest_deterministic(hash_hex.decode('hex'), sigencode=sigencode_der, hashfunc=hashfunc)
     
     sig_r, sig_s = sigdecode_der( sig_bin, SECP256k1.order )
     sigb64 = encode_signature(sig_r, sig_s)
@@ -301,7 +323,9 @@ def verify_digest(hash_hex, pubkey_hex, sigb64, hashfunc=hashlib.sha256):
     # NOTE: this method uses the ecdsa package, not cryptography.
     # it is much slower, since it's pure Python.
 
-    assert isinstance(hash_hex, (str, unicode))
+    if not isinstance(hash_hex, (str, unicode)):
+        raise ValueError("hash hex is not a string")
+
     hash_hex = str(hash_hex)
 
     sig_r, sig_s = decode_signature(sigb64)
