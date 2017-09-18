@@ -28,7 +28,7 @@ from ConfigParser import SafeConfigParser
 import logging
 
 DEBUG = False
-if os.environ.get("BLOCKSTACK_DEBUG") == "1":
+if os.environ.get("BLOCKSTACK_DEBUG") == "1" or os.environ.get("BLOCKSTACK_TEST") == "1":
     DEBUG = True
 
 IMPL = None             # class, package, or instance that implements the virtual chain state engine
@@ -54,6 +54,14 @@ EXPIRATION_PERIOD = BLOCKS_PER_YEAR*1
 AVERAGE_BLOCKS_PER_HOUR = MINUTES_PER_HOUR/AVERAGE_MINUTES_PER_BLOCK
 
 BLOCKS_CONSENSUS_HASH_IS_VALID = 4*AVERAGE_BLOCKS_PER_HOUR
+
+VIRTUALCHAIN_BTC_DEFAULT_SEGWIT = True
+
+def get_features(feature_name):
+    if feature_name == 'segwit':
+        return VIRTUALCHAIN_BTC_DEFAULT_SEGWIT
+
+    raise ValueError("Unrecognized feature '{}'".format(feature_name))
 
 
 def get_logger(name=None):
