@@ -127,12 +127,13 @@ def tx_estimate_signature_len(privkey_info):
     Raise ValueError of the key is not recognized
     """
     if is_singlesig(privkey_info):
-        # one signature produces a scriptsig of ~73 bytes (signature + pubkey)
+        # one signature produces a scriptsig of ~71 bytes (signature) + pubkey + encoding (4)
         log.debug("Single private key makes a ~73 byte signature")
-        return 73
+        pubkey = ecdsa_private_key(privkey_info).public_key().to_hex().decode('hex')
+        return 71 + len(pubkey) + 4
 
     elif is_multisig(privkey_info):
-        # one signature produces a scriptsig of redeem_script + num_pubkeys * ~74 
+        # one signature produces a scriptsig of redeem_script + (num_pubkeys * ~74 bytes) + encoding (~6)
         m, _ = parse_multisig_redeemscript( privkey_info['redeem_script'] )
         siglengths = 74 * m
         scriptlen = len(privkey_info['redeem_script']) / 2
