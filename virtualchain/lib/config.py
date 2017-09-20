@@ -26,6 +26,7 @@ import os
 import argparse
 from ConfigParser import SafeConfigParser
 import logging
+import time
 
 DEBUG = False
 if os.environ.get("BLOCKSTACK_DEBUG") == "1" or os.environ.get("BLOCKSTACK_TEST") == "1":
@@ -55,11 +56,22 @@ AVERAGE_BLOCKS_PER_HOUR = MINUTES_PER_HOUR/AVERAGE_MINUTES_PER_BLOCK
 
 BLOCKS_CONSENSUS_HASH_IS_VALID = 4*AVERAGE_BLOCKS_PER_HOUR
 
-VIRTUALCHAIN_BTC_DEFAULT_SEGWIT = True
+VIRTUALCHAIN_BTC_DEFAULT_SEGWIT = False
 
 def get_features(feature_name):
     if feature_name == 'segwit':
         return VIRTUALCHAIN_BTC_DEFAULT_SEGWIT
+
+    raise ValueError("Unrecognized feature '{}'".format(feature_name))
+
+
+def set_features(feature_name, value):
+    if feature_name == 'segwit':
+        if value not in [True, False]:
+            raise ValueError("Invalid value (must be True/False)")
+
+        VIRTUALCHAIN_BTC_DEFAULT_SEGWIT = value
+        return 
 
     raise ValueError("Unrecognized feature '{}'".format(feature_name))
 
@@ -352,3 +364,4 @@ def set_implementation(impl):
     global IMPL
 
     IMPL = impl
+
