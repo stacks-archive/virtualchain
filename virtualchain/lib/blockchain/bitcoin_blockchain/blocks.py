@@ -441,7 +441,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
         return True
 
-    
+
     def parse_tx_input( self, inp ):
         """
         Given a tx input, turn it into an easy-to-read
@@ -483,6 +483,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
         dict (i.e. like what bitcoind would give us).
 
         Does not work on coinbase transactions.
+        Does not include segwit witnesses
         """
 
         txn_serializer = TxSerializer()
@@ -743,8 +744,8 @@ class BlockchainDownloader( BitcoinBasicClient ):
                 assert txhex is not None, "Invalid RPC response '%s' (for %s)" % (simplejson.dumps(resp), txids[resp['id']])
                 
                 if bits.btc_tx_is_segwit(txhex) and not get_features('segwit'):
-                    # no segwit support iet
-                    log.error("FATAL: SegWit transaction detected!  Virtualchain is not yet compatible with SegWit-formatted transactions.")
+                    # no segwit support yet
+                    log.error("FATAL: SegWit transaction detected!  Support for SegWit-formatted transactions is not yet activated")
                     log.error("Please ensure your bitcoind node has `rpcserialversion=0` set.")
                     log.error("Aborting...")
                     os.abort()
