@@ -1198,11 +1198,12 @@ def tx_sign_input(tx, idx, prevout_script, prevout_amount, private_key_info, has
 
 def tx_sign_all_unsigned_inputs(private_key_info, prev_outputs, unsigned_tx_hex, scriptsig_type=None, segwit=None):
     """
-    Sign all unsigned inputs
+    Sign all unsigned inputs with a given key.
+    Use the given outputs to fund them.
 
     @private_key_info: either a hex private key, or a dict with 'private_keys' and 'redeem_script'
     defined as keys.
-    @prev_outputs: a list of {'out_script': xxx, 'value': xxx} that are in 1-to-1 correspondence with the inputs in the tx ('value' is in satoshis)
+    @prev_outputs: a list of {'out_script': xxx, 'value': xxx} that are in 1-to-1 correspondence with the unsigned inputs in the tx ('value' is in satoshis)
     @unsigned_hex_tx: hex transaction with unsigned inputs
 
     Returns: signed hex transaction
@@ -1213,13 +1214,18 @@ def tx_sign_all_unsigned_inputs(private_key_info, prev_outputs, unsigned_tx_hex,
     txobj = btc_tx_deserialize(unsigned_tx_hex)
     inputs = txobj['ins']
     
-    if not len(inputs) == len(prev_outputs):
-        raise ValueError('got {} inputs, and {} prev-outputs'.format(len(inputs), len(prev_outputs)))
-
     if scriptsig_type is None:
         scriptsig_type = btc_privkey_scriptsig_classify(private_key_info)
 
     tx_hex = unsigned_tx_hex
+    prevout_index = 0
+    
+    # import json
+    # print ''
+    # print 'transaction:\n{}'.format(json.dumps(btc_tx_deserialize(unsigned_tx_hex), indent=4, sort_keys=True))
+    # print 'prevouts:\n{}'.format(json.dumps(prev_outputs, indent=4, sort_keys=True))
+    # print ''
+
     for i, inp in enumerate(inputs):
         do_witness_script = segwit
         if inp.has_key('witness_script'):
@@ -1229,12 +1235,16 @@ def tx_sign_all_unsigned_inputs(private_key_info, prev_outputs, unsigned_tx_hex,
             # all inputs must receive a witness script, even if it's empty 
             inp['witness_script'] = ''
 
-        if (inp['script'] and len(inp['script']) > 0) or (inp['witness_script'] and len(inp['witness_script']) > 0):
+        if (inp['script'] and len(inp['script']) > 0) or (inp.has_key('witness_script') and len(inp['witness_script']) > 0):
             continue
 
+        if prevout_index >= len(prev_outputs):
+            raise ValueError("Not enough prev_outputs ({} given, {} more prev-outputs needed)".format(len(prev_outputs), len(inputs) - prevout_index))
+
         # tx with index i signed with privkey
-        tx_hex = tx_sign_input(str(unsigned_tx_hex), i, prev_outputs[i]['out_script'], prev_outputs[i]['value'], private_key_info, segwit=do_witness_script, scriptsig_type=scriptsig_type)
+        tx_hex = tx_sign_input(str(unsigned_tx_hex), i, prev_outputs[prevout_index]['out_script'], prev_outputs[prevout_index]['value'], private_key_info, segwit=do_witness_script, scriptsig_type=scriptsig_type)
         unsigned_tx_hex = tx_hex
+        prevout_index += 1
 
     return tx_hex
 
