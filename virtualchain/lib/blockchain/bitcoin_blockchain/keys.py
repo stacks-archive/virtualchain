@@ -33,7 +33,7 @@ from jsonschema import ValidationError
 from ....lib import hashing, encoding, ecdsalib
 from ....lib.config import get_features
 
-MAX_DATA_LEN = 40       # 40 bytes per data output
+MAX_DATA_LEN = 80       # 80 bytes per data output
 
 OP_BASE58CHECK_PATTERN = r'^([123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+)$'
 OP_ADDRESS_PATTERN = OP_BASE58CHECK_PATTERN
@@ -540,7 +540,7 @@ def address_reencode( address, **blockchain_opts ):
         # bech32 address
         hrp = None
         if network == 'mainnet':
-            hrp = 'bt'
+            hrp = 'bc'
 
         elif network == 'testnet':
             hrp = 'tb'
@@ -550,7 +550,7 @@ def address_reencode( address, **blockchain_opts ):
                 hrp = 'tb'
 
             else:
-                hrp = 'bt'
+                hrp = 'bc'
 
         wver, whash = segwit_addr_decode(address)
         return segwit_addr_encode(whash, hrp=hrp, witver=wver)
