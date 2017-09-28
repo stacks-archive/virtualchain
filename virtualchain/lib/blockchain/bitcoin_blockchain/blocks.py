@@ -169,6 +169,8 @@ class BlockchainDownloader( BitcoinBasicClient ):
         Return True on success
         Return False on error
         """
+        
+        log.debug("Segwit support: {}".format(get_features('segwit')))
 
         self.begin()
 
@@ -522,7 +524,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
         return txdata
 
 
-    def make_sender_info( self, block_hash, txn, i ):
+    def make_sender_info( self, block_hash, txn, i, block_height ):
         """
         Make sender information bundle for a particular input of
         a nulldata transaction.
@@ -543,7 +545,8 @@ class BlockchainDownloader( BitcoinBasicClient ):
             "relindex": txn['relindex'],
             "output_index": inp['vout'],
             "block_hash": block_hash,
-            "relinput": i
+            "relinput": i,
+            "block_height": block_height,
         }
         
         return ret
@@ -652,7 +655,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
                 if str(sender_txid) not in sender_txhashes:
                     sender_txhashes.append( str(sender_txid) )
 
-                sinfo = self.make_sender_info( block_hash, txn, i )
+                sinfo = self.make_sender_info( block_hash, txn, i, height )
 
                 if not self.sender_info.has_key(sender_txid):
                     # map outpoint for this input to the tx info
@@ -742,7 +745,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
                 txhex = resp['result']
                 assert txhex is not None, "Invalid RPC response '%s' (for %s)" % (simplejson.dumps(resp), txids[resp['id']])
-                
+               
                 if bits.btc_tx_is_segwit(txhex) and not get_features('segwit'):
                     # no segwit support yet
                     log.error("FATAL: SegWit transaction detected!  Support for SegWit-formatted transactions is not yet activated")
