@@ -66,6 +66,8 @@ def get_features(feature_name):
 
 
 def set_features(feature_name, value):
+    global VIRTUALCHAIN_BTC_DEFAULT_SEGWIT
+
     if feature_name == 'segwit':
         if value not in [True, False]:
             raise ValueError("Invalid value (must be True/False)")
