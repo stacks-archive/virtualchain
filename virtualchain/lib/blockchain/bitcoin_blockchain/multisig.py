@@ -142,6 +142,7 @@ def make_multisig_segwit_info( m, pks ):
         'redeem_script': script,
         'private_keys': privkeys,
         'segwit': True,
+        'm': m
     }
 
 
