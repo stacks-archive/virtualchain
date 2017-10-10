@@ -216,8 +216,17 @@ class AuthServiceProxy(object):
             pass
 
         network_info = self.getnetworkinfo()
-        wallet_info = self.getwalletinfo()
         blockchain_info = self.getblockchaininfo()
+        try:
+            wallet_info = self.getwalletinfo()
+        except:
+            wallet_info = {
+                'walletversion': None,
+                'balance': None,
+                'keypoololdest': None,
+                'keypoolsize': None,
+                'paytxfee': None,
+            }
 
         res = {
             'version': network_info['version'],
