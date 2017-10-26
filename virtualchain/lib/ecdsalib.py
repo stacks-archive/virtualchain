@@ -218,11 +218,16 @@ class _ECPublicKey(object):
 
 
 
-def ecdsa_private_key(privkey_str=None, compressed=True):
+def ecdsa_private_key(privkey_str=None):
     """
     Make a private key, but enforce the following rule:
     * unless the key's hex encoding specifically ends in '01', treat it as uncompressed.
     """
+    compressed = False
+    if privkey_str is not None:
+        if len(privkey_str) == 66 and privkey_str[-2:] == '01':
+            compressed = True
+
     return _ECPrivateKey(privkey_str, compressed=compressed)
 
 
