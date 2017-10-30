@@ -78,8 +78,8 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
     SPVClient.init( headers_path )
 
     rc = None
-
-    while True:
+   
+    for i in xrange(0, 65536):
         # basically try forever
         try:
             rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, spv_last_block )
@@ -104,7 +104,7 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
             continue
 
     downloader = None
-    while True:
+    for i in xrange(0, 65536):
         # basically try forever
         try:
             
