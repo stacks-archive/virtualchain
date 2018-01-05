@@ -78,7 +78,6 @@ def get_virtual_transactions( blockchain_opts, first_block_height, last_block_he
     SPVClient.init( headers_path )
 
     rc = None
-
     for i in xrange(0, 65536, 1):
         # basically try forever
         try:
