@@ -196,7 +196,7 @@ def make_multisig_segwit_wallet( m, n ):
         pk = BitcoinPrivateKey(compressed=True).to_wif()
         pks.append(pk)
 
-    return make_multisig_segwit_info(m, [pks])
+    return make_multisig_segwit_info(m, pks)
 
 
 def parse_multisig_redeemscript( redeem_script_hex ):
