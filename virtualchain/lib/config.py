@@ -32,15 +32,13 @@ DEBUG = False
 if os.environ.get("BLOCKSTACK_DEBUG") == "1" or os.environ.get("BLOCKSTACK_TEST") == "1":
     DEBUG = True
 
-IMPL = None             # class, package, or instance that implements the virtual chain state engine
-
 """ virtualchain daemon configs
 """
 
-RPC_TIMEOUT = 5  # seconds
+# RPC_TIMEOUT = 5  # seconds
 
 BLOCK_BATCH_SIZE = 10
-
+'''
 REINDEX_FREQUENCY = 10  # in seconds
 
 AVERAGE_MINUTES_PER_BLOCK = 10
@@ -55,6 +53,7 @@ EXPIRATION_PERIOD = BLOCKS_PER_YEAR*1
 AVERAGE_BLOCKS_PER_HOUR = MINUTES_PER_HOUR/AVERAGE_MINUTES_PER_BLOCK
 
 BLOCKS_CONSENSUS_HASH_IS_VALID = 4*AVERAGE_BLOCKS_PER_HOUR
+'''
 
 VIRTUALCHAIN_BTC_DEFAULT_SEGWIT = False
 
@@ -110,107 +109,51 @@ def get_logger(name=None):
 log = get_logger("virtualchain")
 
 
-def get_impl(impl):
-    """
-    Get the implementation--either
-    the given one (if not None), or
-    the globally-set one (if not None).
-    Raise exception if both are None.
-    """
-    global IMPL
-    if impl is not None:
-        return impl
-
-    elif IMPL is not None:
-        return IMPL
-
-    else:
-        raise Exception("No virtualchain implementation set")
-
-
-def get_first_block_id(impl=None):
+def get_first_block_id(impl):
     """
     facade to implementation's first block
     """
-    impl = get_impl(impl)
     return impl.get_first_block_id()
 
 
-def get_working_dir(impl=None, working_dir=None):
-    """
-    Get the absolute path to the working directory.
-    """
-
-    if working_dir:
-        return working_dir
-
-    if os.environ.has_key("VIRTUALCHAIN_WORKING_DIR"):
-        return os.environ["VIRTUALCHAIN_WORKING_DIR"]
-
-    impl = get_impl(impl)
-
-    from os.path import expanduser
-    home = expanduser("~")
-
-    working_dir = None
-    if hasattr(impl, "working_dir") and impl.working_dir is not None:
-        working_dir = impl.working_dir
-
-    else:
-        working_dir = os.path.join(home, "." + impl.get_virtual_chain_name())
-
-    if not os.path.exists(working_dir):
-        os.makedirs(working_dir)
-
-    return working_dir
-
-
-def get_config_filename(impl=None, working_dir=None):
+def get_config_filename(impl, working_dir):
     """
     Get the absolute path to the config file.
     """
-    impl = get_impl(impl)
-
-    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
     config_filename = impl.get_virtual_chain_name() + ".ini"
-
     return os.path.join(working_dir, config_filename)
 
 
-def get_db_filename(impl=None, working_dir=None):
+def get_db_filename(impl, working_dir):
     """
     Get the absolute path to the last-block file.
     """
-    impl = get_impl(impl)
-
-    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
-    lastblock_filename = impl.get_virtual_chain_name() + ".db"
-
-    return os.path.join(working_dir, lastblock_filename)
+    db_filename = impl.get_virtual_chain_name() + ".db"
+    return os.path.join(working_dir, db_filename)
 
 
-def get_lastblock_filename(impl=None, working_dir=None):
-    """
-    Get the absolute path to the last-block file.
-    """
-    impl = get_impl(impl)
-
-    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
-    lastblock_filename = impl.get_virtual_chain_name() + ".lastblock"
-
-    return os.path.join(working_dir, lastblock_filename)
-
-
-def get_snapshots_filename(impl=None, working_dir=None):
+def get_snapshots_filename(impl, working_dir):
     """
     Get the absolute path to the chain's consensus snapshots file.
     """
-    impl = get_impl(impl)
-
-    working_dir = get_working_dir(impl=impl, working_dir=working_dir)
     snapshots_filename = impl.get_virtual_chain_name() + ".snapshots"
-
     return os.path.join(working_dir, snapshots_filename)
+
+
+def get_backups_directory(impl, working_dir):
+    """
+    Get the absolute path to the chain's backups directory
+    """
+    backup_dir = os.path.join( working_dir, 'backups')
+    return backup_dir
+
+
+def get_lockfile_filename(impl, working_dir):
+    """
+    Get the absolute path to the chain's indexing lockfile
+    """
+    lockfile_name = impl.get_virtual_chain_name() + ".lock"
+    return os.path.join(working_dir, lockfile_name)
 
 
 def get_bitcoind_config(config_file=None, impl=None):
@@ -297,18 +240,16 @@ def get_bitcoind_config(config_file=None, impl=None):
     return default_bitcoin_opts
 
 
-def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
+def parse_bitcoind_args(return_parser=False, parser=None):
     """
      Get bitcoind command-line arguments.
      Optionally return the parser used to do so as well.
     """
 
-    impl = get_impl(impl)
-
     opts = {}
 
     if parser is None:
-        parser = argparse.ArgumentParser(description='%s version %s' % (impl.get_virtual_chain_name(), impl.get_virtual_chain_version()))
+        parser = argparse.ArgumentParser()
 
     parser.add_argument(
           '--bitcoind-server',
@@ -348,22 +289,4 @@ def parse_bitcoind_args(return_parser=False, parser=None, impl=None):
     else:
         return opts
 
-
-def get_implementation():
-    """
-    Get the globally-set implementation of the virtual chain state.
-    """
-    global IMPL
-    return IMPL
-
-
-def set_implementation(impl):
-    """
-    Set the package, class, or bundle of methods
-    that implements the virtual chain's core logic.
-    This method must be called before anything else.
-    """
-    global IMPL
-
-    IMPL = impl
 
