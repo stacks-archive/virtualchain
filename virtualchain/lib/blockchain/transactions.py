@@ -33,114 +33,62 @@ from ..config import get_logger
 log = get_logger("virtualchain")
 
 from bitcoin_blockchain.bits import *
+from bitcoin_blockchain.blocks import get_bitcoin_virtual_transactions
 
-def get_virtual_transactions( blockchain_opts, first_block_height, last_block_height, spv_last_block=None, first_block_hash=None, tx_filter=None ):
+def get_virtual_transactions(blockchain_name, blockchain_opts, first_block_height, last_block_height, tx_filter=None, **hints):
     """
-    Get the sequence of virtualchain transactions from the blockchain.
-    Each transaction returned will be a `nulldata` transaction.
-    It will be formatted like a bitcoind RPC transaction, as returned by `getrawtransaction`,
-    but with the following additions and differences:
-    * output values will be in satoshis
-    * `fee` will be defined, and will be the total amount sent (in satoshis)
-    * `txindex` will be defined, and will be the offset in the block where the tx occurs
-    * `senders` will be defined as a list, and will contain the following information
-        * `script_pubkey`: an output scriptPubKey hex script
-        * `amount`: a value in satoshis
-        * `addresses`: a list of zero or more addresses
-      This list corresponds to the list of outputs that funded the given transaction's inputs.
-      That is, senders[i] corresponds to the output that funded vin[i], found in transaction vin[i]['txid']
-    * `nulldata` will be define as the hex string that encodes the OP_RETURN payload
-
-    @blockchain_opts must be a dict with the following keys:
-    * `bitcoind_server`: hostname of the bitcoind peer
-    * `bitcoind_port`: RPC port of the bitcoind peer
-    * `bitcoind_p2p_port`: p2p port of the bitcoind peer
-    * `bitcoind_user`: username to authenticate
-    * `bitcoind_passwd`: password for authentication
-    * `bitcoind_spv_path`: path on disk to where SPV headers should be stored
-
-    Returns a list of [(block number), [txs]] on success
-    Returns None on error
+    Get the sequence of virtualchain transactions from a particular blockchain over a given range of block heights.
+    Returns a list of tuples in the format of [(block height, [txs])], where
+    each tx in [txs] is the parsed transaction.  The parsed transaction will conform to... # TODO write a spec for this
+    
+    Each transaction has at least the following fields:
+    
+    `version`: the version of the transaction
+    `txindex`: the index into the block where this tx occurs
+    `ins`: a list of transaction inputs, where each member is a dict with:
+        `outpoint`: a dict of {'hash': txid of transaction that fed it in, 'index': the index into the feeder tx's outputs list}
+        `script`: the signature script for this input
+    `outs`: a list of transaction outputs, where each member is a dict with:
+        `value`: the amount of currency units spent (in the fundamental units of the chain)
+        `script`: the spending script for this input
+    `senders`: a list of information in 1-to-1 correspondence with each input regarding the transactions that funded it:
+        `value`: the amount of currency units sent (in fundamental units of the chain) 
+        `script_pubkey`: the spending script for the sending transaction
+    
+    Returns [(block height, [txs])] on success
+    Returns None on error.
+    Raises ValueError on unknown blockchain
     """
+    if blockchain_name == 'bitcoin':
+        return get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_block_height, tx_filter=tx_filter, **hints)
 
-    headers_path = blockchain_opts['bitcoind_spv_path']
-    bitcoind_server = "%s:%s" % (blockchain_opts['bitcoind_server'], blockchain_opts['bitcoind_p2p_port'])
-    spv_last_block = spv_last_block if spv_last_block is not None else last_block_height - 1
-
-    if headers_path is None:
-        log.error("FATAL: bitcoind_spv_path not defined in blockchain options")
-        os.abort()
-
-    if not os.path.exists(headers_path):
-        log.debug("Will download SPV headers to %s" % headers_path)
-
-    # synchronize SPV headers
-    SPVClient.init( headers_path )
-
-    rc = None
-    for i in xrange(0, 65536, 1):
-        # basically try forever
-        try:
-            rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, spv_last_block )
-            if not rc:
-                delay = min( 3600, 2**i + ((2**i) * random.random()) )
-                log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, delay))
-                time.sleep( delay )
-                continue
-
-            else:
-                break
-
-        except SystemExit, s:
-            log.error("Aborting on SPV header sync")
-            os.abort()
-
-        except Exception, e:
-            log.exception(e)
-            delay = min( 3600, 2**i + ((2**i) * random.random()) )
-            log.debug("Try again in %s seconds" % delay)
-            time.sleep( delay )
-            continue
-
-    downloader = None
-    for i in xrange(0, 65536, 1):
-        # basically try forever
-        try:
-            
-            # fetch all blocks
-            downloader = BlockchainDownloader( blockchain_opts, blockchain_opts['bitcoind_spv_path'], first_block_height, last_block_height - 1, \
-                                       p2p_port=blockchain_opts['bitcoind_p2p_port'], tx_filter=tx_filter )
-
-            if first_block_height > last_block_height - 1:
-                downloader.loop_exit()
-                break
-
-            rc = downloader.run()
-            if not rc:
-                delay = min( 3600, 2**i + ((2**i) * random.random()) )
-                log.error("Failed to fetch %s-%s; trying again in %s seconds" % (first_block_height, last_block_height, delay))
-                time.sleep( delay )
-                continue
-            else:
-                break
-
-        except SystemExit, s:
-            log.error("Aborting on blockchain sync")
-            os.abort()
-
-        except Exception, e:
-            log.exception(e)
-            delay = min( 3600, 2**i + ((2**i) * random.random()) )
-            log.debug("Try again in %s seconds" % delay)
-            time.sleep( delay )
-            continue            
-
-    if not rc or downloader is None:
-        log.error("Failed to fetch blocks %s-%s" % (first_block_height, last_block_height))
-        return None
-
-    # extract
-    block_info = downloader.get_block_info()
-    return block_info
+    else:
+        raise ValueError("Unknown blockchain {}".format(blockchain_name))
 
 
+def tx_parse(blockchain_name, raw_tx):
+    """
+    Parse a raw transaction, based on the type of blockchain it's from
+    Returns a tx dict on success (see get_virtual_transactions)
+    Raise ValueError for unknown blockchain
+    Raise some other exception for invalid raw_tx (implementation-specific)
+    """
+    if blockchain_name == 'bitcoin':
+        return btc_tx_deserialize(raw_tx)
+    else:
+        raise ValueError("Unknown blockchain {}".format(blockchain_name))
+
+
+def tx_is_data_script(blockchain_name, out_script):
+    """
+    Given a blockchain name and an output script (tx['outs'][x]['script']),
+    determine whether or not it is a data-bearing script---i.e. one with data for the state engine.
+
+    Return True if so
+    Reurn False if not
+    """
+    if blockchain_name == 'bitcoin':
+        return btc_tx_output_script_has_data(out_script)
+
+    else:
+        raise ValueError('Unknown blockchain {}'.format(blockchain_name))
