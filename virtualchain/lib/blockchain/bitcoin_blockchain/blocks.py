@@ -259,15 +259,29 @@ class BlockchainDownloader( BitcoinBasicClient ):
                     # match sender outputs to the nulldata tx's inputs
                     for nulldata_input_vout_index in self.sender_info[sender_txid].keys():
                         if sender_txid != "0000000000000000000000000000000000000000000000000000000000000000":
+                            
+                            # regular tx, not coinbase 
+                            assert nulldata_input_vout_index < len(sender_tx['outs']), 'Output index {} is out of bounds for {}'.format(out_index, sender_txid)
+
+                            # save sender info 
+                            self.add_sender_info(sender_txid, nulldata_input_vout_index, sender_tx['outs'][nulldata_input_vout_index])
+
+                            '''
                             # regular tx, not coinbase
                             assert nulldata_input_vout_index < len(sender_tx['vout']), "Ouptut index %s is out of bounds for %s" % (out_index, sender_txid)
                         
                             # save sender info
                             self.add_sender_info( sender_txid, nulldata_input_vout_index, sender_tx['vout'][nulldata_input_vout_index] )
+                            '''
                         
                         else:
+
+                            self.add_sender_info(sender_txid, nulldata_input_vout_index, sender_tx['outs'][0])
+
+                            '''
                             # coinbase
                             self.add_sender_info( sender_txid, nulldata_input_vout_index, sender_tx['vout'][0] )
+                            '''
 
                     # update accounting
                     self.num_txs_received += 1
@@ -287,6 +301,17 @@ class BlockchainDownloader( BitcoinBasicClient ):
         for (block_hash, block_info) in self.block_info.items():
             for tx in block_info['txns']:
                 assert None not in tx['senders'], "Missing one or more senders in %s; dump follows\n%s" % (tx['txid'], simplejson.dumps(tx, indent=4, sort_keys=True)) 
+                for i in range(0, len(tx['ins'])):
+                    inp = tx['ins'][i]
+                    sinfo = tx['senders'][i]
+
+                    assert sinfo['txid'] in self.sender_info, 'Surreptitious sender tx {}'.format(sinfo['txid'])
+                    assert inp['outpoint']['index'] == sinfo['nulldata_vin_outpoint'], 'Mismatched sender/input index ({}: {} != {}); dump follows\n{}'.format(
+                            sinfo['txid'], inp['outpoint']['index'], sinfo['nulldata_vin_outpoint'], simplejson.dumps(tx, indent=4, sort_keys=True))
+
+                    assert inp['outpoint']['hash'] == sinfo['txid'], 'Mismatched sender/input txid ({} != {}); dump follows\n{}'.format(inp['txid'], sender['txid'], simplejson.dumps(tx, indent=4, sort_keys=True))
+
+                '''
                 for i in xrange(0, len(tx['vin'])):
                     inp = tx['vin'][i]
                     sinfo = tx['senders'][i]
@@ -296,6 +321,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
                                         (sinfo['txid'], inp['vout'], sinfo['nulldata_vin_outpoint'], simplejson.dumps(tx, indent=4, sort_keys=True))
 
                     assert inp['txid'] == sinfo['txid'], "Mismatched sender/input txid (%s != %s); dump follows\n" % (inp['txid'], sender['txid'], simplejson.dumps(tx, indent=4, sort_keys=True))
+                '''
 
         return True
 
@@ -419,22 +445,34 @@ class BlockchainDownloader( BitcoinBasicClient ):
         relindex = self.sender_info[sender_txhash][nulldata_vin_outpoint]['relindex']
         relinput_index = self.sender_info[sender_txhash][nulldata_vin_outpoint]['relinput']
 
-        value_in = sender_out_data['value']
+        value_in_satoshis = sender_out_data['value']
+        script_pubkey = sender_out_data['script']
+        script_info = bits.btc_tx_output_parse_script(script_pubkey)
+        script_type = script_info['type']
+        addresses = script_info.get('addresses', [])
+
+        '''
+        # value_in = sender_out_data['value']
+        value_in_satoshis = sender_out_data['value_satoshis']
         script_pubkey = sender_out_data['scriptPubKey']['hex']
         script_type = sender_out_data['scriptPubKey']['type']
         addresses = sender_out_data['scriptPubKey'].get("addresses", [])
-
+        '''
+        
         sender_info = {
-            "amount": value_in,
+            # "amount": value_in,             # NOTE: this is a float.  Don't rely on it for consensus!
+            # "units": int(value_in * 10**8),
+            "value": value_in_satoshis,
             "script_pubkey": script_pubkey,
             "script_type": script_type,
             "addresses": addresses,
             "nulldata_vin_outpoint": nulldata_vin_outpoint,
-            "txid": sender_txhash
+            "txid": sender_txhash,
         }
         
         # debit this tx's total value
-        self.block_info[block_hash]['txns'][relindex]['fee'] += int(value_in * 10**8)
+        # self.block_info[block_hash]['txns'][relindex]['fee'] += int(value_in * 10**8)
+        self.block_info[block_hash]['txns'][relindex]['fee'] += value_in_satoshis
 
         # remember this sender, but put it in the right place.
         # senders[i] must correspond to tx['vin'][i]
@@ -442,39 +480,6 @@ class BlockchainDownloader( BitcoinBasicClient ):
         self.block_info[block_hash]['num_senders'] += 1
 
         return True
-
-
-    def parse_tx_input( self, inp ):
-        """
-        Given a tx input, turn it into an easy-to-read
-        dict (i.e. like what bitcoind would give us).
-        """
-        scriptsig = binascii.hexlify( inp.signature_script )
-        prev_txid = "%064x" % inp.previous_output.out_hash
-
-        ret = {
-            "vout": inp.previous_output.index,
-            "txid": prev_txid,
-            "scriptSig": {
-                "hex": scriptsig,
-                "asm": bits.tx_script_to_asm(scriptsig)
-            }
-        }
-        return ret
-
-
-    def parse_tx_output( self, i, outp ):
-        """
-        Given a tx output, turn it into an easy-to-read
-        dict (i.e. like what bitcoind would give us).
-        """
-        scriptpubkey = binascii.hexlify( outp.pk_script )
-        script_info = bits.btc_tx_output_parse_script( scriptpubkey )
-        return {
-            "value": Decimal(outp.value) / Decimal(10**8),
-            "n": i,
-            "scriptPubKey": script_info
-        }
 
 
     def parse_tx( self, txn, block_header, block_hash, txindex ):
@@ -499,28 +504,25 @@ class BlockchainDownloader( BitcoinBasicClient ):
             "size": len( tx_bin ),
             "blockhash": block_hash,
             "blocktime": block_header.get('timestamp', 0),
-            "vin": [],
-            "vout": [],
 
             # non-standard; added by us for virtualchain
             "txindex": txindex,
             "relindex": None,
             "senders": None,
             "fee": 0,
-            "nulldata": None
+            "nulldata": None,
+            "ins": None,     # library-specific field, to be passed to the state engine
+            "outs": None,    # library-specific field, to be passed to the state engine
         }
-
-        for inp in txn.tx_in:
-            input_info = self.parse_tx_input( inp )
-            txdata['vin'].append( input_info )
-
-        for i in xrange(0, len(txn.tx_out)):
-            outp = txn.tx_out[i]
-            output_info = self.parse_tx_output( i, outp )
-            txdata['vout'].append( output_info )
+        
+        # keep these around too, since this is what gets fed into the virtualchain state engine implementation 
+        virtualchain_btc_tx_data = bits.btc_tx_deserialize(txdata['hex'])
+        txdata['ins'] = virtualchain_btc_tx_data['ins']
+        txdata['outs'] = virtualchain_btc_tx_data['outs']
 
         # we know how many senders there have to be 
-        txdata['senders'] = [None] * len(txdata['vin'])
+        txdata['senders'] = [None] * len(txdata['ins'])
+
         return txdata
 
 
@@ -533,22 +535,21 @@ class BlockchainDownloader( BitcoinBasicClient ):
         funded the ith input of the given tx.
         """
 
-        inp = txn['vin'][i]
+        inp = txn['ins'][i]
         ret = {
             # to be filled in...
-            "amount_in": 0,
-            "scriptPubKey": None,
-            "addresses": None,
+            'scriptPubKey': None,
+            'addresses': None,
 
-            # for matching the input this sender funded
+            # for matching the input and sender funded
             "txindex": txn['txindex'],
             "relindex": txn['relindex'],
-            "output_index": inp['vout'],
+            "output_index": inp['outpoint']['index'],
             "block_hash": block_hash,
             "relinput": i,
             "block_height": block_height,
         }
-        
+
         return ret
 
 
@@ -593,21 +594,22 @@ class BlockchainDownloader( BitcoinBasicClient ):
             # if there is no nulldata output, then we don't care about this one.
             has_nulldata = False
             nulldata_payload = None
-            for outp in txdata['vout']:
-                if outp['scriptPubKey']['type'] == 'nulldata':
+
+            for outp in txdata['outs']:
+                script_type = bits.btc_script_classify(outp['script'])
+                if script_type == 'nulldata':
                     has_nulldata = True
-                    nulldata_script = bits.btc_script_deserialize(outp['scriptPubKey']['hex'])
+                    nulldata_script = bits.btc_script_deserialize(outp['script'])
                     if len(nulldata_script) < 2:
                         # malformed OP_RETURN; no data after '6a'
                         nulldata_payload = None
-
                     else:
-                        nulldata_payload = bits.btc_script_deserialize(outp['scriptPubKey']['hex'])[1]
-
-                    if type(nulldata_payload) not in [str, unicode]:
+                        nulldata_payload = nulldata_script[1]
+                    
+                    if nulldata_payload is not None and not isinstance(nulldata_payload, (str,unicode)):
                         # this is a malformed OP_RETURN, where the varint that should follow OP_RETURN doesn't have the data behind it.
                         # just take the data after the varint, no matter what it is (i.e. "6a52" will be "")
-                        nulldata_payload = outp['scriptPubKey']['hex'][4:]
+                        nulldata_payload = outp['script'][4:]
 
             # count all txs processed
             self.num_txs_processed += 1
@@ -620,7 +622,8 @@ class BlockchainDownloader( BitcoinBasicClient ):
             
             # calculate total output (part of fee; will be debited when we discover the senders)
             # NOTE: this works because we have out['value'] as type Decimal
-            txdata['fee'] -= sum( int(out['value'] * 10**8) for out in txdata['vout'] )
+            # txdata['fee'] -= sum( int(out['value'] * 10**8) for out in txdata['vout'] )
+            txdata['fee'] -= sum(out['value'] for out in txdata['outs'])
 
             # remember the relative tx index (i.e. the ith nulldata tx)
             txdata['relindex'] = relindex
@@ -643,14 +646,14 @@ class BlockchainDownloader( BitcoinBasicClient ):
         sender_txhashes = []
 
         for txn in self.block_info[block_hash]['txns']:
-            for i in xrange(0, len(txn['vin'])):
+            for i in range(0, len(txn['ins'])):
 
                 # record information about the transaction
                 # that created this input (so we can go find
                 # it later).
-                inp = txn['vin'][i]
-                sender_txid = inp['txid']
-                inp_sender_outp = inp['vout']
+                inp = txn['ins'][i]
+                sender_txid = inp['outpoint']['hash']
+                inp_sender_outp = inp['outpoint']['index']
 
                 if str(sender_txid) not in sender_txhashes:
                     sender_txhashes.append( str(sender_txid) )
@@ -664,7 +667,6 @@ class BlockchainDownloader( BitcoinBasicClient ):
                 # sinfo is the information from the output in 
                 # the sender-tx that funded inp
                 self.sender_info[sender_txid][inp_sender_outp] = sinfo
-
 
         # update accounting...
         self.num_blocks_received += 1
@@ -697,21 +699,15 @@ class BlockchainDownloader( BitcoinBasicClient ):
             if txid == "0000000000000000000000000000000000000000000000000000000000000000":
                 # coinbase; we never send these
                 ret[txid] = {
-                    "version": 1,
-                    "locktime": 0,
-                    "vin": [],
-                    "vout": [
+                    'version': 1,
+                    'locktime': 0,
+                    'ins': [],
+                    'outs': [
                         {
-                            "n": 0xffffffff,
-                            "scriptPubKey": {
-                                "asm": "",
-                                "hex": "",
-                                "type": "coinbase"
-                            },
-                            "value": 0      # not really 0, but we don't care about coinbases anyway 
+                            'script': '',
+                            'value': 0      # not really 0, but we don't care about coinbases anyway
                         }
                     ],
-                    "txid": txid,
                 }
                 continue
 
@@ -790,8 +786,122 @@ class BlockchainDownloader( BitcoinBasicClient ):
         return ret
 
 
-        
-        
+def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_block_height, tx_filter=None, spv_last_block=None, first_block_hash=None, **hints):
+    """
+    Get the sequence of virtualchain transactions from the blockchain.
+    Each transaction returned will be a `nulldata` transaction (i.e. the first output script starts with OP_RETURN).
+    * output values will be in satoshis
+    * `fee` will be defined, and will be the total amount sent (in satoshis)
+    * `txindex` will be defined, and will be the offset in the block where the tx occurs
+    * `senders` will be defined as a list, and will contain the following information
+        * `script_pubkey`: an output scriptPubKey hex script
+        * `units`: a value in satoshis
+        * `addresses`: a list of zero or more addresses
+      This list corresponds to the list of outputs that funded the given transaction's inputs.
+      That is, senders[i] corresponds to the output that funded vin[i], found in transaction vin[i]['txid']
+    * `nulldata` will be define as the hex string that encodes the OP_RETURN payload
+
+    @blockchain_opts must be a dict with the following keys:
+    * `bitcoind_server`: hostname of the bitcoind peer
+    * `bitcoind_port`: RPC port of the bitcoind peer
+    * `bitcoind_p2p_port`: p2p port of the bitcoind peer
+    * `bitcoind_user`: username to authenticate
+    * `bitcoind_passwd`: password for authentication
+    * `bitcoind_spv_path`: path on disk to where SPV headers should be stored
+
+    Returns a list of [(block number), [txs]] on success
+    Returns None on error
+    """
+
+    headers_path = blockchain_opts['bitcoind_spv_path']
+    bitcoind_server = "%s:%s" % (blockchain_opts['bitcoind_server'], blockchain_opts['bitcoind_p2p_port'])
+    spv_last_block = spv_last_block if spv_last_block is not None else last_block_height - 1
+
+    if headers_path is None:
+        log.error("FATAL: bitcoind_spv_path not defined in blockchain options")
+        os.abort()
+
+    if not os.path.exists(headers_path):
+        log.debug("Will download SPV headers to %s" % headers_path)
+
+    # synchronize SPV headers
+    SPVClient.init( headers_path )
+
+    rc = None
+    for i in xrange(0, 65536, 1):
+        # basically try forever
+        try:
+            rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, spv_last_block )
+            if not rc:
+                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, delay))
+                time.sleep( delay )
+                continue
+
+            else:
+                break
+
+        except SystemExit, s:
+            log.error("Aborting on SPV header sync")
+            os.abort()
+
+        except Exception, e:
+            log.exception(e)
+            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            log.debug("Try again in %s seconds" % delay)
+            time.sleep( delay )
+            continue
+
+    downloader = None
+    for i in xrange(0, 65536, 1):
+        # basically try forever
+        try:
+            
+            # fetch all blocks
+            downloader = BlockchainDownloader( blockchain_opts, blockchain_opts['bitcoind_spv_path'], first_block_height, last_block_height - 1, \
+                                       p2p_port=blockchain_opts['bitcoind_p2p_port'], tx_filter=tx_filter )
+
+            if first_block_height > last_block_height - 1:
+                downloader.loop_exit()
+                break
+
+            rc = downloader.run()
+            if not rc:
+                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                log.error("Failed to fetch %s-%s; trying again in %s seconds" % (first_block_height, last_block_height, delay))
+                time.sleep( delay )
+                continue
+            else:
+                break
+
+        except SystemExit, s:
+            log.error("Aborting on blockchain sync")
+            os.abort()
+
+        except Exception, e:
+            log.exception(e)
+            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            log.debug("Try again in %s seconds" % delay)
+            time.sleep( delay )
+            continue            
+
+    if not rc or downloader is None:
+        log.error("Failed to fetch blocks %s-%s" % (first_block_height, last_block_height))
+        return None
+
+    # extract
+    block_info = downloader.get_block_info()
+    return block_info
+    
+
+def get_bitcoin_blockchain_height(bitcoind):
+    """
+    Given a bitcoind client, get the blockchain height
+    """
+    current_block = int(bitcoind.getblockcount())
+    return current_block
+
+
 if __name__ == "__main__":
     # test synchonize headers 
     try:
