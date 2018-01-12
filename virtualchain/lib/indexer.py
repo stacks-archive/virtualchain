@@ -31,6 +31,10 @@ import shutil
 import time
 import traceback
 import simplejson
+import sqlite3
+import random
+import subprocess
+import tempfile
 
 from .hashing import *
 from .merkle import *
@@ -39,19 +43,52 @@ from collections import defaultdict
 
 import config
 import blockchain.transactions as transactions
+from blockchain.bitcoin_blockchain import get_bitcoin_blockchain_height
 
 log = config.get_logger("virtualchain")
  
 RESERVED_KEYS = [
    'virtualchain_opcode',
-   'virtualchain_outputs',
-   'virtualchain_senders',
-   'virtualchain_fee',
-   'virtualchain_block_number',
-   'virtualchain_accepted',
    'virtualchain_txid',
-   'virtualchain_txindex'
+   'virtualchain_txindex',
+   'virtualchain_txhex',
+   'virtualchain_senders',
+   'virtualchain_data_hex',
+   'virtualchain_fee',
 ]
+
+CHAINSTATE_FIELDS = [
+    'txid',
+    'txindex',
+    'block_id',
+    'vtxindex',
+    'opcode',
+    'data_hex',
+    'senders',
+    'tx_hex',
+    'fee'
+]
+
+VIRTUALCHAIN_DB_SCRIPT = """
+-- senders is a JSON-serialized blob describing all transactions that fed into this virtualchain transaction
+CREATE TABLE chainstate( txid TEXT NOT NULL,
+                         txindex INT NOT NULL,
+                         block_id INT NOT NULL,
+                         vtxindex INT NOT NULL,
+                         opcode TEXT NOT NULL,
+                         data_hex TEXT NOT NULL,
+                         senders TEXT NOT NULL,
+                         tx_hex TEXT NOT NULL,
+                         fee INT NOT NULL,
+                         PRIMARY KEY(txid,block_id,vtxindex) );
+
+CREATE TABLE snapshots(block_id INT NOT NULL,
+                       timestamp INT NOT NULL,
+                       consensus_hash STRING NOT NULL,
+                       ops_hash STRING,
+                       PRIMARY KEY(block_id));
+"""
+
 
 class StateEngine( object ):
     """
@@ -78,7 +115,9 @@ class StateEngine( object ):
     were calculated on the same blockchain fork simply by ensuring that the operation had
     the right Merkle root hash for that block.  These Merkle root hashes are called
     "consensus hashes."
-    
+   
+    # TODO: update this next paragraph
+
     Processing a block happens in seven stages: "parse", "check", "log", "commit", "serialize", "snapshot", and "save"
     * "Parsing" a block transaction's nulldata (i.e. from an OP_RETURN) means translating 
     the OP_RETURN data into a virtual chain operation.
@@ -92,9 +131,8 @@ class StateEngine( object ):
     Blocks are processed in order, and transactions within a block are processed in the order in which 
     they appear in it.
     """
-    
 
-    def __init__(self, magic_bytes, opcodes, opfields, impl=None, state=None, initial_snapshots={}, expected_snapshots={}, backup_frequency=None, backup_max_age=None, read_only=False ):
+    def __init__(self, impl, working_dir, state=None, magic_bytes=None, opcodes=None, opfields=None, initial_snapshots=None, expected_snapshots={}, backup_frequency=None, backup_max_age=None, read_only=False ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -119,7 +157,7 @@ class StateEngine( object ):
         
         The job of the implementation is to translate the above data, plus anything else it 
         can earn from the previously-parsed transactions and from other sources, into a 
-        dictionary of (field: value) tuples that constitute an operation.
+        dictionary of (field: value) tuples that constitute a state transition.
 
         @magic_bytes: the `magic` field above.
         @opcodes: the list of possible values for the `op` field.
@@ -134,281 +172,470 @@ class StateEngine( object ):
         to their expected consensus hashes.  If the calculated consensus hash does not 
         match the expected consensus hash, the state engine aborts the program.
         """
-        
-        self.consensus_hashes = initial_snapshots
-        self.pending_ops = defaultdict(list)
-        self.magic_bytes = magic_bytes 
+        # TODO: check impl
+        for elem in ['get_opcodes', 'get_opfields', 'get_magic_bytes', 'get_initial_snapshots', 'get_first_block_id', 'db_save', 'db_parse', 'db_check', 'db_commit', 'get_blockchain', 'get_valid_transaction_window']:
+            assert hasattr(impl, elem), 'Implementation is missing "{}"'.format(elem)
+
+        if opcodes is None:
+            opcodes = impl.get_opcodes() 
+
+        if opfields is None:
+            opfields = impl.get_opfields()
+
+        if magic_bytes is None:
+            magic_bytes = impl.get_magic_bytes()
+
+        if initial_snapshots is None:
+            initial_snapshots = impl.get_initial_snapshots()
+            
+        self.magic_bytes = magic_bytes
         self.opcodes = opcodes[:]
         self.opfields = copy.deepcopy(opfields)
         self.state = state
         self.impl = impl
-        self.lastblock = self.impl.get_first_block_id() - 1
-        self.pool = None
-        self.rejected = {}
+        self.lastblock = self.impl.get_first_block_id() - 1     # start from the beginning by default; will change with db_setup()
         self.expected_snapshots = expected_snapshots
         self.backup_frequency = backup_frequency
         self.backup_max_age = backup_max_age
         self.read_only = read_only
-
-        firsttime = True
-
-        consensus_snapshots_filename = config.get_snapshots_filename(impl=impl)
-        lastblock_filename = config.get_lastblock_filename(impl=impl)
-       
-        # if we crashed during a commit, and we're openning read-write, try to finish
-        if not read_only:
-            rc = self.commit( startup=True )
-            if not rc:
-               log.error("Failed to commit partial data.  Rolling back and aborting.")
-               self.rollback()
-               traceback.print_stack()
-               os.abort()
-
-        # can be missing all files (i.e. this is the first time), or none of them 
-        for fp in [consensus_snapshots_filename, lastblock_filename]:
-            if os.path.exists( fp ):
-                # starting with existing data
-                firsttime = False
+        self.setup = False
+        self.working_dir = working_dir
         
-        # attempt to load the snapshots 
-        if os.path.exists( consensus_snapshots_filename ):
-           log.debug("consensus snapshots at '%s'" % consensus_snapshots_filename)
+        # caller must call db_setup() next.
 
-           try:
-              with open(consensus_snapshots_filename, 'r') as f: 
-                 db_dict = json.loads(f.read())
-                 assert 'snapshots' in db_dict
-                 self.consensus_hashes = db_dict['snapshots']
-                 
-           except Exception, e:
-              log.error("FATAL: Failed to read consensus snapshots at '%s'. Aborting." % consensus_snapshots_filename )
-              log.exception(e)
-              traceback.print_stack()
-              os.abort()
-            
-        elif firsttime:
 
-            log.debug("consensus snapshots at '%s'" % consensus_snapshots_filename)
+    @classmethod
+    def db_format_query(cls, query, values):
+        """
+        Turn a query into a string for printing.
+        Useful for debugging.
+        """
+        return 'CHAINSTATE: ' + "".join( ["%s %s" % (frag, "'%s'" % val if type(val) in [str, unicode] else val) for (frag, val) in zip(query.split("?"), values + ("",))] )
+
+
+    def db_setup(self):
+        """
+        Set up the state engine database.
+        * If it doesn't exist, then create it.
+        * If it does exist, then check that it is in a clean state.  If not, then recover from a known-good backup.
+
+        Return True on success
+        Return False if there was an unclean shutdown.  The caller should call db_restore() in this case to continue
+        Raise exception on error
+        Abort on db error
+        """
+        if self.db_exists(impl=self.impl, working_dir=self.working_dir):
+            # resuming from previous indexing
+            # unclean shutdown?
+            if self.db_is_indexing(self.impl, self.working_dir):
+                log.error("Unclean shutdown detected")
+                return False
+        
+        else:
+            # setting up for the first time
+            assert not self.read_only, 'Cannot instantiate database if read_only is True'
+            db_con = self.db_create(self.impl, self.working_dir)
+            initial_snapshots = self.impl.get_initial_snapshots()
+            for block_id in sorted(initial_snapshots.keys()):
+                self.db_snapshot_append(db_con, int(block_id), str(initial_snapshots[block_id]), None, int(time.time()))
+
+        self.chainstate_path = config.get_snapshots_filename(self.impl, self.working_dir)
+        self.lastblock = self.get_lastblock(self.impl, self.working_dir)
+        self.setup = True
+        return True
+
+
+    def db_restore(self, block_number=None):
+        """
+        Restore the database and clear the indexing lockfile.
+        Restore to a given block if given; otherwise use the most recent valid backup.
+
+        Return True on success
+        Return False if there is no state to restore
+        Raise exception on error
+        """
+        restored = False
+        if block_number is not None:
+            # restore a specific backup
             try:
-                with open( consensus_snapshots_filename, 'w') as f:
-                    f.write( json.dumps( {'snapshots': self.consensus_hashes} ) )
-                    f.flush()
-
-            except Exception, e:
-                log.error("FATAL: failed to store initial snapshots to %s. Aborting." % consensus_snapshots_filename )
-                log.exception(e)
-                traceback.print_stack()
-                os.abort()
+                self.backup_restore(block_number, self.impl, self.working_dir)
+                restored = True
+            except AssertionError:
+                log.error("Failed to restore state from {}".format(block_number))
+                return False
 
         else:
-            log.error("FATAL: No such file or directory: %s" % consensus_snapshots_filename )
-            traceback.print_stack()
-            os.abort()
+            # find the latest block
+            backup_blocks = self.get_backup_blocks(self.impl, self.working_dir)
+            for block_number in reversed(sorted(backup_blocks)):
+                try:
+                    self.backup_restore(block_number, self.impl, self.working_dir)
+                    restored = True
+                    log.debug("Restored state from {}".format(block_number))
+                    break
+                except AssertionError:
+                    log.debug("Failed to restore state from {}".format(block_number))
+                    continue
 
-        # what was the last block processed?
-        if os.path.exists( lastblock_filename ):
-           log.debug("lastblock at '%s'" % lastblock_filename)
+            if not restored:
+                # failed to restore
+                log.error("Failed to restore state from {}".format(','.join(backup_blocks)))
+                return False
 
-           self.lastblock = self.get_lastblock( lastblock_filename=lastblock_filename )
-           log.debug("Lastblock: %s (%s)" % (self.lastblock, lastblock_filename))
-           if self.lastblock is None:
-              log.error("FATAL: Failed to read last block number at '%s'.  Aborting." % lastblock_filename )
-              log.exception(e)
-              traceback.print_stack()
-              os.abort()
-         
-        elif firsttime:
-            log.debug("lastblock at '%s'" % lastblock_filename)
+        # woo!
+        self.db_set_indexing(False, self.impl, self.working_dir)
+        return self.db_setup()
+
+    
+    @classmethod
+    def db_exists(cls, impl, working_dir):
+        """
+        Does the chainstate db exist?
+        """
+        path = config.get_snapshots_filename(impl, working_dir)
+        return os.path.exists(path)
+
+    
+    @classmethod
+    def db_create(cls, impl, working_dir):
+        """
+        Create a sqlite3 db at the given path.
+        Create all the tables and indexes we need.
+        Returns a db connection on success
+        Raises an exception on error
+        """
+
+        global VIRTUALCHAIN_DB_SCRIPT
+       
+        log.debug("Setup chain state in {}".format(working_dir))
+
+        path = config.get_snapshots_filename(impl, working_dir)
+        if os.path.exists( path ):
+            raise Exception("Database {} already exists")
+
+        lines = [l + ";" for l in VIRTUALCHAIN_DB_SCRIPT.split(";")]
+        con = sqlite3.connect(path, isolation_level=None, timeout=2**30)
+
+        for line in lines:
+            con.execute(line)
+
+        con.row_factory = StateEngine.db_row_factory
+        return con
+
+    
+    @classmethod
+    def db_open(cls, impl, working_dir):
+        """
+        Open a connection to our chainstate db
+        """
+        path = config.get_snapshots_filename(impl, working_dir)
+        con = sqlite3.connect(path, isolation_level=None, timeout=2**30)
+        con.row_factory = StateEngine.db_row_factory
+        return con
+
+    
+    @classmethod
+    def db_row_factory(cls, cursor, row):
+        """
+        Row factory to convert rows to a dict
+        """
+        d = {}
+        for idx, col in enumerate( cursor.description ):
+            d[col[0]] = row[idx]
+
+        return d
+
+    
+    @classmethod
+    def db_query_execute(cls, cur, query, values, verbose=True):
+        """
+        Execute a query.
+        Handle db timeouts.
+        Abort on failure.
+        """
+        timeout = 1.0
+
+        if verbose:
+            log.debug(cls.db_format_query(query, values))
+
+        while True:
             try:
-                log.debug("Store lastblock %s to %s" % (self.lastblock, lastblock_filename))
-                with open(lastblock_filename, "w") as lastblock_f:
-                    lastblock_f.write("%s" % self.lastblock)
-                    lastblock_f.flush()
+                ret = cur.execute(query, values)
+                return ret
+            except sqlite3.OperationalError as oe:
+                if oe.message == "database is locked":
+                    timeout = timeout * 2 + timeout * random.random()
+                    log.error("Query timed out due to lock; retrying in %s: %s" % (timeout, cls.db_format_query( query, values )))
+                    time.sleep(timeout)
+                
+                else:
+                    log.exception(oe)
+                    log.error("FATAL: failed to execute query (%s, %s)" % (query, values))
+                    log.error("\n".join(traceback.format_stack()))
+                    os.abort()
 
             except Exception, e:
-                log.error("FATAL: failed to store initial lastblock to %s.  Aborting." % lastblock_filename)
                 log.exception(e)
-                traceback.print_stack()
+                log.error("FATAL: failed to execute query (%s, %s)" % (query, values))
+                log.error("\n".join(traceback.format_stack()))
                 os.abort()
 
+
+    @classmethod
+    def db_chainstate_append(cls, cur, **fields):
+        """
+        Insert a row into the chain state.
+        Meant to be executed as part of a transaction.
+
+        Return True on success
+        Raise an exception if the fields are invalid
+        Abort on db error.
+        """
+        missing = []
+        extra = []
+        for reqfield in CHAINSTATE_FIELDS:
+            if reqfield not in fields:
+                missing.append(reqfield)
+
+        for fieldname in fields:
+            if fieldname not in CHAINSTATE_FIELDS:
+                extra.append(fieldname)
+
+        if len(missing) > 0 or len(extra) > 0:
+            raise ValueError("Invalid fields: missing: {}, extra: {}".format(','.join(missing), ','.join(extra)))
+
+        query = 'INSERT INTO chainstate ({}) VALUES ({});'.format(
+                ','.join( CHAINSTATE_FIELDS ),
+                ','.join( ['?'] * len(CHAINSTATE_FIELDS)))
+
+        args = tuple([fields[fieldname] for fieldname in CHAINSTATE_FIELDS])
+        cls.db_query_execute(cur, query, args)
+        return True
+
+
+    @classmethod
+    def db_snapshot_append(cls, cur, block_id, consensus_hash, ops_hash, timestamp):
+        """
+        Append hash info for the last block processed, and the time at which it was done.
+        Meant to be executed as part of a transaction.
+
+        Return True on success
+        Raise an exception on invalid block number
+        Abort on db error
+        """
+        
+        query = 'INSERT INTO snapshots (block_id,consensus_hash,ops_hash,timestamp) VALUES (?,?,?,?);'
+        args = (block_id,consensus_hash,ops_hash,timestamp)
+        
+        cls.db_query_execute(cur, query, args)
+        return True
+
+    
+    @classmethod
+    def db_chainstate_get_block(cls, cur, block_height):
+        """
+        Get the list of virtualchain transactions accepted at a given block.
+        Returns the list of rows, where each row is a dict.
+        """
+        query = 'SELECT * FROM chainstate WHERE block_id = ? ORDER BY vtxindex;'
+        args = (block_height,)
+
+        rows = cls.db_query_execute(cur, query, args)
+        ret = []
+
+        for r in rows:
+            rowdata = {
+                'txid': str(r['txid']),
+                'block_id': r['block_id'],
+                'txindex': r['txindex'],
+                'vtxindex': r['vtxindex'],
+                'opcode': str(r['opcode']),
+                'data_hex': str(r['data_hex']),
+                'senders': simplejson.loads(r['senders']),
+                'tx_hex': str(r['tx_hex']),
+                'fee': r['fee']
+            }
+
+            ret.append(rowdata)
+
+        return ret
+
+
+    @classmethod
+    def db_set_indexing(cls, is_indexing, impl, working_dir):
+        """
+        Set lockfile path as to whether or not the system is indexing.
+        NOT THREAD SAFE, USE ONLY FOR CRASH DETECTION.
+        """
+        indexing_lockfile_path = config.get_lockfile_filename(impl, working_dir)
+        if is_indexing:
+            # make sure this exists
+            with open(indexing_lockfile_path, 'w') as f:
+                pass
+
         else:
-            log.error("FATAL: No such file or directory: %s" % lastblock_filename )
-            traceback.print_stack()
-            os.abort()
+            # make sure it does not exist 
+            try:
+                os.unlink(indexing_lockfile_path)
+            except:
+                pass
 
 
-    def get_lastblock( self, lastblock_filename=None, impl=None, working_dir=None ):
+    @classmethod
+    def db_is_indexing(cls, impl, working_dir):
+        """
+        Is the system indexing?
+        Return True if so, False if not.
+        """
+        indexing_lockfile_path = config.get_lockfile_filename(impl, working_dir)
+        return os.path.exists(indexing_lockfile_path)
+
+    
+    @classmethod
+    def get_lastblock(cls, impl, working_dir):
         """
         What was the last block processed?
         Return the number on success
         Return None on failure to read
         """
+        if not cls.db_exists(impl, working_dir):
+            return None
 
-        if lastblock_filename is None:
-            
-            if impl is None:
-                impl = self.impl
-
-            lastblock_filename = config.get_lastblock_filename(impl=impl, working_dir=working_dir)
+        con = cls.db_open(impl, working_dir)
+        query = 'SELECT MAX(block_id) FROM snapshots;'
         
-        if os.path.exists( lastblock_filename ):
-           try:
-              with open(lastblock_filename, 'r') as f:
-                 lastblock_str = f.read().strip()
-                 return int(lastblock_str)
-              
-           except Exception, e:
-              log.error("Failed to read last block number at '%s'" % lastblock_filename )
-              return None
+        rows = cls.db_query_execute(con, query, (), verbose=False)
+        ret = None
+        for r in rows:
+            ret = r['MAX(block_id)']
 
-        return None
+        con.close()
+        return ret
+   
 
-          
-    def rollback( self ):
+    @classmethod
+    def get_consensus_hashes(cls, impl, working_dir, start_block_height=None, end_block_height=None):
         """
-        Roll back a pending write: blow away temporary files.
+        Read all consensus hashes into memory.  They're write-once read-many,
+        so no need to worry about cache-coherency.
         """
+        if (start_block_height is None and end_block_height is not None) or (start_block_height is not None and end_block_height is None):
+            raise ValueError("Need either both or neither start/end block height")
+
+        con = cls.db_open(impl, working_dir)
+        range_query = ''
+        range_args = ()
+
+        if start_block_height and end_block_height:
+            range_query += ' WHERE block_id >= ? AND block_id < ?'
+            range_args += (start_block_height,end_block_height)
+
+        query = 'SELECT block_id,consensus_hash FROM snapshots' + range_query + ';'
+        args = range_args
+
+        rows = cls.db_query_execute(con, query, range_args)
+        ret = {}
+        block_min = None
+        block_max = None
+
+        for r in rows:
+            ret[r['block_id']] = r['consensus_hash']
+
+            if block_min is None or block_min > r['block_id']:
+                block_min = r['block_id']
+
+            if block_max is None or block_max < r['block_id']:
+                block_max = r['block_id']
+
+        con.close()
         
-        tmp_db_filename = config.get_db_filename() + ".tmp"
-        tmp_snapshot_filename = config.get_snapshots_filename() + ".tmp"
-        tmp_lastblock_filename = config.get_lastblock_filename() + ".tmp"
-        
-        for f in [tmp_db_filename, tmp_snapshot_filename, tmp_lastblock_filename]:
-            if os.path.exists( f ):
-                
-                try:
-                    os.unlink( f )
-                except:
-                    log.error("Failed to unlink '%s'" % f )
-                    pass
-    
-    
-    def commit( self, backup=False, startup=False ):
+        # sanity check
+        for i in range(block_min,block_max+1):
+            ch = ret.get(i, None)
+
+            assert ch is not None, 'Missing consensus hash for {}'.format(i)
+            assert isinstance(ret[i], (str,unicode)), 'consensus hash for {} is type {}'.format(i, type(ret[i]))
+
+        return ret
+   
+
+    @classmethod
+    def get_ops_hashes(cls, impl, working_dir, start_block_height=None, end_block_height=None):
         """
-        Move all written but uncommitted data into place.
-        Return True on success 
-        Return False on error (in which case the caller should rollback())
-        
-        It is safe to call this method repeatedly until it returns True.
+        Read all consensus hashes into memory.  They're write-once read-many,
+        so no need to worry about cache-coherency.
         """
+        if (start_block_height is None and end_block_height is not None) or (start_block_height is not None and end_block_height is None):
+            raise ValueError("Need either both or neither start/end block height")
 
-        if self.read_only:
-           log.error("FATAL: read-only")
-           os.abort()
+        con = cls.db_open(impl, working_dir)
+        range_query = ' WHERE ops_hash IS NOT NULL'
+        range_args = ()
 
-        tmp_db_filename = config.get_db_filename(impl=self.impl) + ".tmp"
-        tmp_snapshot_filename = config.get_snapshots_filename(impl=self.impl) + ".tmp"
-        tmp_lastblock_filename = config.get_lastblock_filename(impl=self.impl) + ".tmp"
+        if start_block_height and end_block_height:
+            range_query += ' AND block_id >= ? AND block_id < ?'
+            range_args += (start_block_height,end_block_height)
+
+        query = 'SELECT block_id,ops_hash FROM snapshots' + range_query + ';'
+        args = range_args
+
+        rows = cls.db_query_execute(con, query, range_args)
+        ret = {}
+        block_min = None
+        block_max = None
+
+        for r in rows:
+            ret[r['block_id']] = r['ops_hash']
+
+            if block_min is None or block_min > r['block_id']:
+                block_min = r['block_id']
+
+            if block_max is None or block_max < r['block_id']:
+                block_max = r['block_id']
+
+        con.close()
         
-        if not os.path.exists( tmp_lastblock_filename ) and (os.path.exists(tmp_db_filename) or os.path.exists(tmp_snapshot_filename)):
-            # we did not successfully stage the write.
-            # rollback 
-            log.error("Partial write detected.  Not committing.")
-            return False
-           
-        # basic sanity checks: don't overwrite the db if the file is zero bytes, or if we can't load it
-        if os.path.exists( tmp_db_filename ):
-            db_dir = os.path.dirname( tmp_db_filename )
+        # sanity check
+        if block_min is not None and block_max is not None:
+            for i in range(block_min,block_max+1):
+                oh = ret.get(i, None)
 
-            try:
-                dirfd = os.open(db_dir, os.O_DIRECTORY)
-                os.fsync(dirfd)
-                os.close( dirfd )
-            except Exception, e:
-                log.exception(e)
-                log.error("FATAL: failed to sync directory %s" % db_dir)
-                traceback.print_stack()
-                os.abort()
+                assert oh is not None, 'Missing ops hash for {}'.format(i)
+                assert isinstance(ret[i], (str,unicode)), 'ops hash for {} is type {}'.format(i, type(ret[i]))
 
-            sb = os.stat( tmp_db_filename )
-            if sb.st_size == 0:
-                log.error("Partial write detected: tried to overwrite with zero-sized db!  Will rollback.")
-                return False
+        return ret
 
-            if startup:
-                # make sure we can load this 
-                try:
-                    with open(tmp_snapshot_filename, "r") as f:
-                        db_txt = f.read()
-
-                    db_json = json.loads(db_txt)
-                except:
-                    log.error("Partial write detected: corrupt partially-committed db!  Will rollback.")
-                    return False
-
-        
-        backup_time = int(time.time() * 1000000)
-       
-        listing = []
-        listing.append( ("lastblock", tmp_lastblock_filename, config.get_lastblock_filename(impl=self.impl)) )
-        listing.append( ("snapshots", tmp_snapshot_filename, config.get_snapshots_filename(impl=self.impl)) )
-        listing.append( ("db", tmp_db_filename, config.get_db_filename(impl=self.impl)) )
-
-        for i in xrange(0, len(listing)):
-            file_type, tmp_filename, filename = listing[i]
-            
-            dir_path = os.path.dirname( tmp_filename )
-            dirfd = None
-            try:
-                dirfd = os.open(dir_path, os.O_DIRECTORY)
-                os.fsync(dirfd)
-            except Exception, e:
-                log.exception(e)
-                log.error("FATAL: failed to sync directory %s" % dir_path)
-                traceback.print_stack()
-                os.abort()
-
-            if not os.path.exists( tmp_filename ):
-                # no new state written
-                os.close( dirfd )
-                continue  
-
-            # commit our new lastblock, consensus hash set, and state engine data
-            try:
-               
-               # NOTE: rename fails on Windows if the destination exists 
-               if sys.platform == 'win32' and os.path.exists( filename ):
-                   log.debug("Clear old '%s' %s" % (file_type, filename))
-                   os.unlink( filename )
-                   os.fsync( dirfd )
-
-               if not backup:
-                   log.debug("Rename '%s': %s --> %s" % (file_type, tmp_filename, filename))
-                   os.rename( tmp_filename, filename )
-                   os.fsync( dirfd )
-
-               else:
-                   log.debug("Rename and back up '%s': %s --> %s" % (file_type, tmp_filename, filename))
-                   shutil.copy( tmp_filename, tmp_filename + (".%s" % backup_time))
-                   os.rename( tmp_filename, filename )
-                   os.fsync( dirfd )
-                  
-            except Exception, e:
-               log.exception(e)
-               log.error("Failed to rename '%s' to '%s'" % (tmp_filename, filename))
-               os.close( dirfd )
-               return False 
-
-            os.close( dirfd )
-           
-        return True
-       
 
     def set_backup_frequency( self, backup_frequency ):
+        """
+        Set how many blocks between backups
+        """
         self.backup_frequency = backup_frequency 
 
 
     def set_backup_max_age( self, backup_max_age ):
+        """
+        Set how old backups can be (in blocks)
+        """
         self.backup_max_age = backup_max_age
 
 
+    @classmethod
+    def get_state_paths(cls, impl, working_dir):
+        """
+        Get the set of state paths that point to the current chain and state info.
+        Returns a list of paths.
+        """
+        return [config.get_db_filename(impl, working_dir), config.get_snapshots_filename(impl, working_dir)]
+
+
     @classmethod 
-    def get_backup_blocks( cls, impl, working_dir=None ):
+    def get_backup_blocks(cls, impl, working_dir):
         """
         Get the set of block IDs that were backed up
         """
         ret = []
-        backup_dir = os.path.join( config.get_working_dir(impl=impl, working_dir=working_dir), "backups" )
+        backup_dir = config.get_backups_directory(impl, working_dir)
         if not os.path.exists(backup_dir):
             return []
 
@@ -423,7 +650,7 @@ class StateEngine( object ):
                 continue 
 
             # must exist...
-            backup_paths = cls.get_backup_paths( block_id, impl, working_dir=working_dir )
+            backup_paths = cls.get_backup_paths(block_id, impl, working_dir)
             for p in backup_paths:
                 if not os.path.exists(p):
                     # doesn't exist
@@ -438,13 +665,13 @@ class StateEngine( object ):
 
         
     @classmethod
-    def get_backup_paths( cls, block_id, impl, working_dir=None ):
+    def get_backup_paths(cls, block_id, impl, working_dir):
         """
         Get the set of backup paths, given the virtualchain implementation module and block number
         """
-        backup_dir = os.path.join( config.get_working_dir(impl=impl, working_dir=working_dir), "backups" )
+        backup_dir = config.get_backups_directory(impl, working_dir)
         backup_paths = []
-        for p in [config.get_db_filename(impl=impl, working_dir=working_dir), config.get_snapshots_filename(impl=impl, working_dir=working_dir), config.get_lastblock_filename(impl=impl, working_dir=working_dir)]:
+        for p in cls.get_state_paths(impl, working_dir):
             pbase = os.path.basename(p)
             backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % block_id))
             backup_paths.append( backup_path )
@@ -453,37 +680,44 @@ class StateEngine( object ):
 
 
     @classmethod
-    def backup_restore( cls, block_id, impl, working_dir=None ):
+    def backup_restore(cls, block_id, impl, working_dir):
         """
-        Restore from a backup, given the virutalchain implementation module and block number
+        Restore from a backup, given the virutalchain implementation module and block number.
+        NOT THREAD SAFE.  DO NOT CALL WHILE INDEXING.
+        
+        Return True on success
+        Raise exception on error, i.e. if a backup file is missing
         """
-        backup_dir = os.path.join( config.get_working_dir(impl=impl, working_dir=working_dir), "backups" )
-        backup_paths = cls.get_backup_paths( block_id, impl, working_dir=working_dir )
+        backup_dir = config.get_backups_directory(impl, working_dir)
+        backup_paths = cls.get_backup_paths(block_id, impl, working_dir)
         for p in backup_paths:
-            assert os.path.exists( p ), "No such backup file: %s" % backup_paths
+            assert os.path.exists(p), "No such backup file: {}".format(p)
 
-        for p in [config.get_db_filename(impl=impl, working_dir=working_dir), config.get_snapshots_filename(impl=impl, working_dir=working_dir), config.get_lastblock_filename(impl=impl, working_dir=working_dir)]:
+        for p in cls.get_state_paths(impl, working_dir):
             pbase = os.path.basename(p)
-            backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % block_id))
-            log.debug("Restoring '%s' to '%s'" % (backup_path, p))
-            shutil.copy( backup_path, p )
+            backup_path = os.path.join(backup_dir, pbase + (".bak.{}".format(block_id)))
+            log.debug("Restoring '{}' to '{}'".format(backup_path, p))
+            shutil.copy(backup_path, p)
     
         return True
 
 
-    def make_backups( self, block_id, working_dir=None ):
+    def make_backups(self, block_id):
         """
         If we're doing backups on a regular basis, then 
         carry them out here if it is time to do so.
         This method does nothing otherwise.
+
+        Return None on success
         Abort on failure
         """
+        assert self.setup, "Not set up yet.  Call .db_setup() first!"
 
         # make a backup?
         if self.backup_frequency is not None:
             if (block_id % self.backup_frequency) == 0:
 
-                backup_dir = os.path.join( config.get_working_dir(impl=self.impl, working_dir=working_dir), "backups" )
+                backup_dir = config.get_backups_directory(self.impl, self.working_dir)
                 if not os.path.exists(backup_dir):
                     try:
                         os.makedirs(backup_dir)
@@ -492,16 +726,18 @@ class StateEngine( object ):
                         log.error("FATAL: failed to make backup directory '%s'" % backup_dir)
                         traceback.print_stack()
                         os.abort()
-                        
 
-                for p in [config.get_db_filename(impl=self.impl, working_dir=working_dir), config.get_snapshots_filename(impl=self.impl, working_dir=working_dir), config.get_lastblock_filename(impl=self.impl, working_dir=working_dir)]:
+                for p in self.get_state_paths(self.impl, self.working_dir):
                     if os.path.exists(p):
                         try:
                             pbase = os.path.basename(p)
-                            backup_path = os.path.join( backup_dir, pbase + (".bak.%s" % (block_id - 1)))
+                            backup_path = os.path.join(backup_dir, pbase + (".bak.{}".format(block_id - 1)))
 
-                            if not os.path.exists( backup_path ):
-                                shutil.copy( p, backup_path )
+                            if not os.path.exists(backup_path):
+                                rc = sqlite3_backup(p, backup_path)
+                                if not rc:
+                                    log.warning("Failed to back up as an SQLite db.  Falling back to /bin/cp")
+                                    shutil.copy(p, backup_path)
                             else:
                                 log.error("Will not overwrite '%s'" % backup_path)
 
@@ -514,20 +750,23 @@ class StateEngine( object ):
         return
 
 
-    def clear_old_backups( self, block_id, working_dir=None ):
+    def clear_old_backups(self, block_id):
         """
         If we limit the number of backups we make, then clean out old ones
         older than block_id - backup_max_age (given in the constructor)
-
         This method does nothing otherwise.
+
+        Return None on success
+        Raise exception on error
         """
-        
+        assert self.setup, "Not set up yet.  Call .db_setup() first!"
+
         if self.backup_max_age is None:
             # never delete backups
             return 
 
         # find old backups 
-        backup_dir = os.path.join( config.get_working_dir(impl=self.impl, working_dir=working_dir), "backups" )
+        backup_dir = config.get_backups_directory(self.impl, self.working_dir)
         if not os.path.exists(backup_dir):
             return 
 
@@ -557,9 +796,9 @@ class StateEngine( object ):
                     os.unlink(backup_path)
                 except:
                     pass
+   
 
-    
-    def save( self, block_id, consensus_hash, pending_ops, backup=False, working_dir=None ):
+    def save(self, block_id, consensus_hash, ops_hash, accepted_ops, virtualchain_ops_hints, backup=False):
         """
         Write out all state to the working directory.
         Calls the implementation's 'db_save' method to store any state for this block.
@@ -571,77 +810,78 @@ class StateEngine( object ):
         Return False if the implementation wants to exit.
         Aborts on fatal error
         """
-        
+        assert self.setup, "Not set up yet.  Call .db_setup() first!"
+        assert len(accepted_ops) == len(virtualchain_ops_hints)
+
         if self.read_only:
-            log.error("FATAL: read only")
+            log.error("FATAL: StateEngine is read only")
             traceback.print_stack()
             os.abort()
 
         if block_id < self.lastblock:
-            log.error("FATAL: Already processed up to block %s (got %s)" % (self.lastblock, block_id))
-            traceback.print_stack()
-            os.abort()
-
-        # stage data to temporary files
-        tmp_db_filename = (config.get_db_filename(impl=self.impl, working_dir=working_dir) + ".tmp")
-        tmp_snapshot_filename = (config.get_snapshots_filename(impl=self.impl, working_dir=working_dir) + ".tmp")
-        tmp_lastblock_filename = (config.get_lastblock_filename(impl=self.impl, working_dir=working_dir) + ".tmp")
-        
-        try:
-            with open(tmp_snapshot_filename, 'w') as f:
-                db_dict = {
-                   'snapshots': self.consensus_hashes
-                }
-                f.write(json.dumps(db_dict))
-                f.flush()
-            
-            with open(tmp_lastblock_filename, "w") as lastblock_f:
-                lastblock_f.write("%s" % block_id)
-                lastblock_f.flush()
-
-        except Exception, e:
-            # failure to save is fatal 
-            log.exception(e)
-            log.error("FATAL: Could not stage data for block %s" % block_id)
-            traceback.print_stack()
-            os.abort()
-
-        rc = self.impl.db_save( block_id, consensus_hash, pending_ops, tmp_db_filename, db_state=self.state )
-        if not rc:
-            # failed to save 
-            # this is a fatal error
-            log.error("FATAL: Implementation failed to save at block %s to %s" % (block_id, tmp_db_filename))
-            
-            try:
-                os.unlink( tmp_lastblock_filename )
-            except:
-                pass 
-            
-            try:
-                os.unlink( tmp_snapshot_filename )
-            except:
-                pass 
-            
-            traceback.print_stack()
-            os.abort()
-       
-        rc = self.commit( backup=backup )
-        if not rc:
-            log.error("Failed to commit data at block %s.  Rolling back and aborting." % block_id )
-            
-            self.rollback()
+            log.error("FATAL: Already processed up to block {} (got {})".format(self.lastblock, block_id))
             traceback.print_stack()
             os.abort()
         
-        else:
-            self.lastblock = block_id
+        # ask the implementation to save 
+        if hasattr(self.impl, 'db_save'):
+            rc = False
+            try:
+                rc = self.impl.db_save(block_id, consensus_hash, ops_hash, accepted_ops, virtualchain_ops_hints, db_state=self.state)
+            except Exception as e:
+                log.exception(e)
+                rc = False
 
-            # make new backups 
-            self.make_backups( block_id )
+            if not rc:
+                log.error("FATAL: Implementation failed to save state at block {}".format(block_id))
+                traceback.print_stack()
+                os.abort()
 
-            # clear out old backups
-            self.clear_old_backups( block_id )
-   
+        # save new chainstate
+        self.lastblock = block_id
+
+        # start a transaction to store the new data
+        db_con = self.db_open(self.impl, self.working_dir)
+        cur = db_con.cursor()
+        cur.execute("BEGIN")
+        
+        # add chainstate
+        for i, (accepted_op, virtualchain_op_hints) in enumerate(zip(accepted_ops, virtualchain_ops_hints)):
+
+            # unpack virtualchain hints
+            senders = virtualchain_op_hints['virtualchain_senders']
+            data_hex = virtualchain_op_hints['virtualchain_data_hex']
+            tx_hex = virtualchain_op_hints['virtualchain_txhex']
+            txid = virtualchain_op_hints['virtualchain_txid']
+            fee = virtualchain_op_hints['virtualchain_fee']
+            opcode = virtualchain_op_hints['virtualchain_opcode']
+            txindex = virtualchain_op_hints['virtualchain_txindex']
+            vtxindex = i
+
+            vtx_data = {
+                'txid': txid,
+                'senders': simplejson.dumps(senders),
+                'data_hex': data_hex,
+                'tx_hex': tx_hex,
+                'fee': fee,
+                'opcode': opcode,
+                'txindex': txindex,
+                'vtxindex': vtxindex,
+                'block_id': block_id
+            }
+            
+            self.db_chainstate_append(cur, **vtx_data)
+            
+        # update snapshot info
+        self.db_snapshot_append(cur, block_id, consensus_hash, ops_hash, int(time.time()))
+        cur.execute("END")
+        db_con.close()
+
+        # make new backups and clear old ones
+        self.make_backups(block_id)
+        self.clear_old_backups(block_id)
+        
+        # ask the implementation if we should continue
         continue_indexing = True
         if hasattr(self.impl, "db_continue"):
             try:
@@ -653,14 +893,14 @@ class StateEngine( object ):
                 os.abort()
 
         return continue_indexing
+  
 
-   
     @classmethod
     def calculate_consensus_hash( self, merkle_root ):
         """
         Given the Merkle root of the set of records processed, calculate the consensus hash.
         """
-        return binascii.hexlify( bin_hash160(merkle_root, True)[0:16])
+        return bin_hash160(merkle_root, True)[0:16].encode('hex')
 
   
     @classmethod 
@@ -670,11 +910,11 @@ class StateEngine( object ):
         """
         record_hashes = []
         for serialized_op in serialized_ops:
-            record_hash = binascii.hexlify( bin_double_sha256( serialized_op ) )
-            record_hashes.append( record_hash )
+            record_hash = bin_double_sha256( serialized_op ).encode('hex')
+            record_hashes.append(record_hash)
 
         if len(record_hashes) == 0:
-            record_hashes.append( binascii.hexlify( bin_double_sha256( "" ) ) )
+            record_hashes.append(bin_double_sha256("").encode('hex'))
 
         # put records into their own Merkle tree, and mix the root with the consensus hashes.
         record_hashes.sort()
@@ -690,7 +930,6 @@ class StateEngine( object ):
         Generate the consensus hash from the hash over the current ops, and 
         all previous required consensus hashes.
         """
-
         # mix into previous consensus hashes...
         all_hashes = prev_consensus_hashes[:] + [record_root_hash]
         all_hashes.sort()
@@ -709,11 +948,12 @@ class StateEngine( object ):
         the (k-1)th, (k-2)th; (k-3)th; ...; (k - (2**i - 1))th consensus hashes, 
         all the way back to the beginning of time (prev_consensus_hashes[i] is the 
         (k - (2**(i+1) - 1))th consensus hash)
-        """
 
+        Returns (consensus_hash, ops_hash)
+        """
         record_root_hash = StateEngine.make_ops_snapshot( serialized_ops )
-        log.debug("Snapshot('%s', %s)" % (record_root_hash, prev_consensus_hashes))
-        return cls.make_snapshot_from_ops_hash( record_root_hash, prev_consensus_hashes )
+        log.debug("Snapshot('{}', {})".format(record_root_hash, prev_consensus_hashes))
+        return (cls.make_snapshot_from_ops_hash( record_root_hash, prev_consensus_hashes ), record_root_hash)
 
 
     @classmethod
@@ -727,7 +967,6 @@ class StateEngine( object ):
         Return the canonical form on success.
         Return None on error.
         """
-
         fields = opfields.get( opcode, None )
         if fields is None:
             log.error("BUG: unrecongnized opcode '%s'" % opcode )
@@ -749,18 +988,18 @@ class StateEngine( object ):
            all_values.append( str(len(str(field_value))) + ":" + str(field_value) )
 
         if len(missing) > 0:
-           log.error("Missing fields; dump follows:\n%s" % simplejson.dumps( opdata, indent=4, sort_keys=True ))
-           raise Exception("BUG: missing fields '%s'" % (",".join(missing)))
+           log.error("Missing fields; dump follows:\n{}".format(simplejson.dumps( opdata, indent=4, sort_keys=True )))
+           raise Exception("BUG: missing fields '{}'".format(",".join(missing)))
 
         if verbose:
-            log.debug("SERIALIZE: %s:%s" % (opcode, ",".join(debug_all_values) ))
+            log.debug("SERIALIZE: {}:{}".format(opcode, ",".join(debug_all_values) ))
 
         field_values = ",".join( all_values )
 
         return opcode + ":" + field_values
 
 
-    def snapshot( self, block_id, oplist ):
+    def snapshot(self, block_id, oplist):
         """
         Given the currnet block ID and the set of operations committed,
         find the consensus hash that represents the state of the virtual chain.
@@ -789,13 +1028,16 @@ class StateEngine( object ):
         7.    Fetch ops[3], ch[2]
         8.    Verify (7) and ch[0] from (1) with ch[3], so ops[3] is trusted
         9.    Verify op in ops[3]
+
+        Returns (consensus hash, ops_hash)
         """
         
-        log.debug("Snapshotting block %s" % (block_id) )
+        assert self.setup, "Not set up yet.  Call .db_setup() first!"
+        log.debug("Snapshotting block {}".format(block_id))
         
         serialized_ops = []
         for opdata in oplist:
-            serialized_record = StateEngine.serialize_op( opdata['virtualchain_opcode'], opdata, self.opfields )
+            serialized_record = StateEngine.serialize_op(opdata['virtualchain_opcode'], opdata, self.opfields)
             serialized_ops.append( serialized_record )
 
         previous_consensus_hashes = []
@@ -803,7 +1045,7 @@ class StateEngine( object ):
         i = 1
         while k - (2**i - 1) >= self.impl.get_first_block_id():
             prev_block = k - (2**i - 1)
-            prev_ch = self.get_consensus_at( prev_block )
+            prev_ch = self.get_consensus_at(prev_block)
             log.debug("Snapshotting block %s: consensus hash of %s is %s" % (block_id, prev_block, prev_ch))
 
             if prev_ch is None:
@@ -811,61 +1053,64 @@ class StateEngine( object ):
                 traceback.print_stack()
                 os.abort()
 
-            previous_consensus_hashes.append( prev_ch )
+            previous_consensus_hashes.append(prev_ch)
             i += 1
 
-        consensus_hash = StateEngine.make_snapshot( serialized_ops, previous_consensus_hashes )
-
-        self.consensus_hashes[ str(block_id) ] = consensus_hash 
-        
-        return consensus_hash
+        consensus_hash, ops_hash = StateEngine.make_snapshot(serialized_ops, previous_consensus_hashes) 
+        return consensus_hash, ops_hash
    
    
-    def parse_transaction( self, block_id, tx ):
+    def parse_transaction(self, block_id, tx):
         """
         Given a block ID and an data-bearing transaction, 
         try to parse it into a virtual chain operation.
         
         Use the implementation's 'db_parse' method to do so.
-        
+
         Data transactions that do not have the magic bytes or a valid opcode
         will be skipped automatically.  The db_parse method does not need
         to know how to handle them.
-        
-        Set the following fields in op:
-        * virtualchain_opcode:   the operation code 
-        * virtualchain_outputs:  the list of transaction outputs
-        * virtualchain_senders:  the list of transaction senders 
-        * virtualchain_fee:      the total amount of money sent
-        * virtualchain_block_number:  the block ID in which this transaction occurred
+
+        @tx is a dict with
+        `txid`: the transaction ID
+        `txindex`: the offset in the block where this tx occurs
+        `nulldata`: the hex-encoded scratch data from the transaction
+        `ins`: the list of transaction inputs
+        `outs`: the list of transaction outputs
+        `senders`: the list of transaction senders
+        `fee`: the transaction fee
+        `txhex`: the hex-encoded raw transaction
         
         Return a dict representing the data on success.
         Return None on error
         """
         
         data_hex = tx['nulldata']
-        inputs = tx['vin']
-        outputs = tx['vout']
+        inputs = tx['ins']
+        outputs = tx['outs']
         senders = tx['senders']
         fee = tx['fee']
+        txhex = tx['hex']
         
         if not is_hex(data_hex):
+            # should always work; the tx downloader converts the binary string to hex
             # not a valid hex string 
-            return None
+            raise ValueError("Invalid nulldata: not hex-encoded")
         
         if len(data_hex) % 2 != 0:
+            # should always work; the tx downloader converts the binary string to hex
             # not valid hex string 
-            return None
+            raise ValueError("Invalid nulldata: not hex-encoded")
         
         data_bin = None
         try:
             # should always work; the tx downloader converts the binary string to hex
-            data_bin = binascii.unhexlify( data_hex )
+            data_bin = data_hex.decode('hex')
         except Exception, e:
             log.error("Failed to parse transaction: %s (data_hex = %s)" % (tx, data_hex))
-            raise e
+            raise ValueError("Invalid nulldata: not hex-encoded")
         
-        if not data_bin.startswith( self.magic_bytes ):
+        if not data_bin.startswith(self.magic_bytes):
             # not for us
             return None
         
@@ -874,54 +1119,48 @@ class StateEngine( object ):
             return None
 
         # 3rd byte is always the operation code
-        op_code = data_bin[ len(self.magic_bytes) ]
-        
+        op_code = data_bin[len(self.magic_bytes)]
         if op_code not in self.opcodes:
             return None 
         
         # looks like an op.  Try to parse it.
-        op_payload = data_bin[ len(self.magic_bytes)+1: ]
+        op_payload = data_bin[len(self.magic_bytes)+1:]
         
-        op = self.impl.db_parse( block_id, tx['txid'], tx['txindex'], op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state )
-        
+        op = self.impl.db_parse(block_id, tx['txid'], tx['txindex'], op_code, op_payload, senders, inputs, outputs, fee, db_state=self.state, raw_tx=txhex)
         if op is None:
             # not valid 
             return None 
         
         # store it
         op['virtualchain_opcode'] = op_code
-        op['virtualchain_outputs'] = outputs 
-        op['virtualchain_senders'] = senders 
-        op['virtualchain_fee'] = fee
-        op['virtualchain_block_number'] = block_id
-        op['virtualchain_accepted'] = False       # not yet accepted
         op['virtualchain_txid'] = tx['txid']
         op['virtualchain_txindex'] = tx['txindex']
+        op['virtualchain_txhex'] = txhex
+        op['virtualchain_senders'] = senders
+        op['virtualchain_fee'] = fee
+        op['virtualchain_data_hex'] = op_payload.encode('hex')
         
         return op
    
    
-    def parse_block( self, block_id, txs ):
+    def parse_block(self, block_id, txs):
         """
         Given the sequence of transactions in a block, turn them into a
         sequence of virtual chain operations.
+
+        Return the list of successfully-parsed virtualchain transactions
         """
-        
         ops = []
-        
-        for i in xrange(0,len(txs)):
-            
+        for i in range(0,len(txs)):
             tx = txs[i]
-            
-            op = self.parse_transaction( block_id, tx )
-            
+            op = self.parse_transaction(block_id, tx)
             if op is not None:
                 ops.append( op )
             
         return ops
    
    
-    def remove_reserved_keys( self, op ):
+    def remove_reserved_keys(self, op):
         """
         Remove reserved keywords from an op dict,
         which can then safely be passed into the db.
@@ -940,29 +1179,29 @@ class StateEngine( object ):
         return sanitized, reserved
   
 
-    def sanitize_op( self, op ):
+    def sanitize_op(self, op):
         """
         Remove and return the non-virtualchain-reserved keywords
         from an op.
         """
-        return self.remove_reserved_keys( op )[0]
+        return self.remove_reserved_keys(op)[0]
 
 
-    def log_accept( self, block_id, vtxindex, opcode, op ):
+    def log_accept(self, block_id, vtxindex, opcode, op_data):
         """
         Log an accepted operation
         """
-        log.debug("ACCEPT op %s at (%s, %s) (%s)" % (opcode, block_id, vtxindex, json.dumps(op, sort_keys=True)))
+        log.debug("ACCEPT op {} at ({}, {}) ({})".format(opcode, block_id, vtxindex, json.dumps(op_data, sort_keys=True)))
 
 
-    def log_reject( self, block_id, vtxindex, opcode, op ):
+    def log_reject(self, block_id, vtxindex, opcode, op_data):
         """
         Log a rejected operation
         """
-        log.debug("REJECT op %s (%s)" % (opcode, json.dumps(op, sort_keys=True)))
+        log.debug("REJECT op {} ({})".format(opcode, json.dumps(op_data, sort_keys=True)))
  
 
-    def process_ops( self, block_id, ops ):
+    def process_ops(self, block_id, ops):
         """
         Given a transaction-ordered sequence of parsed operations,
         check their validity and give them to the state engine to 
@@ -971,6 +1210,13 @@ class StateEngine( object ):
         It calls 'db_check' to validate each operation, and 'db_commit'
         to add it to the state engine.  Gets back a list of state
         transitions (ops) to snapshot.
+
+        Returns a defaultdict with the following fields:
+        'virtualchain_ordered':  the list of operations committed by the implementation (where each operation is a dict of fields)
+        'virtualchain_all_ops':  this is ops, plus a list containing the "final" operations returned by the implementation in response to the 'virtualchain_final' hint
+        'virtualchain_final':  this is the list of final operations returned by the implementation in response to the 'virtualchain_final' hint.
+
+        Aborts on error
         """
 
         new_ops = defaultdict(list)
@@ -985,7 +1231,8 @@ class StateEngine( object ):
         to_commit_sanitized = []
         to_commit_reserved = []
 
-        # let the implementation do an initial scan over the blocks 
+        # let the implementation do an initial scan over the blocks
+        # NOTE: these will be different objects in memory from the objects passed into db_check
         initial_scan = []
         for i in xrange(0, len(ops)):
 
@@ -1001,17 +1248,17 @@ class StateEngine( object ):
             log.debug("Compat: no db_scan_block")
 
         # check each operation 
-        for i in xrange(0, len(ops)):
+        for i in range(0, len(ops)):
             op_data = ops[i]
             op_sanitized, reserved = self.remove_reserved_keys( op_data )
             opcode = reserved['virtualchain_opcode']
 
             # check this op
-            rc = self.impl.db_check( block_id, new_ops, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], to_commit_sanitized, db_state=self.state )
+            rc = self.impl.db_check(block_id, new_ops, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], to_commit_sanitized, db_state=self.state)
             if rc:
 
                 # commit this op
-                new_op_list = self.impl.db_commit( block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state )
+                new_op_list = self.impl.db_commit(block_id, opcode, op_sanitized, reserved['virtualchain_txid'], reserved['virtualchain_txindex'], db_state=self.state)
                 if type(new_op_list) != list:
                     new_op_list = [new_op_list]
 
@@ -1024,7 +1271,7 @@ class StateEngine( object ):
                             to_commit_sanitized.append( to_commit_sanitized_op )
 
                             new_op.update( reserved )
-                            new_ops[ opcode ].append( new_op )
+                            new_ops[opcode].append( new_op )
                             new_ops['virtualchain_ordered'].append( new_op )
 
                         else:
@@ -1035,22 +1282,21 @@ class StateEngine( object ):
                 self.log_reject( block_id, reserved['virtualchain_txindex'], opcode, copy.deepcopy(op_sanitized))
 
         
-        # final commit
+        # final commit hint.
         # the implementation has a chance here to feed any extra data into the consensus hash with this call
         # (e.g. to affect internal state transitions that occur as seconary, holistic consequences to the sequence
         # of prior operations for this block).
         final_op = self.impl.db_commit( block_id, 'virtualchain_final', None, None, None, db_state=self.state )
         if final_op is not None:
             final_op['virtualchain_opcode'] = 'final'
-
             new_ops['virtualchain_final'] = [final_op]
-            new_ops['virtualchain_ordered'].append( final_op )
-            new_ops['virtualchain_all_ops'].append( final_op )
+            new_ops['virtualchain_ordered'].append(final_op)
+            new_ops['virtualchain_all_ops'].append(final_op)
 
         return new_ops
     
     
-    def process_block( self, block_id, ops, backup=False, expected_snapshots=None ):
+    def process_block(self, block_id, ops, backup=False, expected_snapshots=None):
         """
         Top-level block processing method.
         Feed the block and its data transactions 
@@ -1058,51 +1304,50 @@ class StateEngine( object ):
         implementation's state.  Cache the 
         resulting data to disk.
        
-        Return the consensus hash for this block on success.
+        Return the (consensus hash, ops hash) for this block on success.
         Exit on failure.
         """
         
-        log.debug("Process block %s (%s virtual transactions)" % (block_id, len(ops)))
+        log.debug("Process block {} ({} virtual transactions)".format(block_id, len(ops)))
 
         if expected_snapshots is None:
             expected_snapshots = self.expected_snapshots
+        if expected_snapshots is None:
+            expected_snapshots = {}
         
-        new_ops = self.process_ops( block_id, ops )
-        sanitized_ops = {}  # for save()
+        new_ops = self.process_ops(block_id, ops)
+        consensus_hash, ops_hash = self.snapshot(block_id, new_ops['virtualchain_ordered'])
 
-        consensus_hash = self.snapshot( block_id, new_ops['virtualchain_ordered'] )
-
-        # sanity check 
+        # sanity check against a known sequence of consensus hashes
         if expected_snapshots.has_key(block_id) and expected_snapshots[block_id] != consensus_hash:
-            log.error("FATAL: consensus hash mismatch at height %s: %s != %s" % (block_id, expected_snapshots[block_id], consensus_hash))
+            log.error("FATAL: consensus hash mismatch at height {}: {} != {}".format(block_id, expected_snapshots[block_id], consensus_hash))
             traceback.print_stack()
             os.abort()
+        
+        # remove virtualchain-reserved keys
+        sanitized_ops = []
+        virtualchain_ops_hints = []
+        for opdata in new_ops['virtualchain_ordered']:
+            op_sanitized, op_reserved = self.remove_reserved_keys(opdata)
+            sanitized_ops.append(op_sanitized)
+            virtualchain_ops_hints.append(op_reserved)
 
-        for op in new_ops.keys():
-
-            sanitized_ops[op] = []
-            for i in xrange(0, len(new_ops[op])):
-
-                op_sanitized, op_reserved = self.remove_reserved_keys( new_ops[op][i] )
-                sanitized_ops[op].append( op_sanitized )
-
-        rc = self.save( block_id, consensus_hash, sanitized_ops, backup=backup )
+        # save state for this block
+        rc = self.save(block_id, consensus_hash, ops_hash, sanitized_ops, virtualchain_ops_hints, backup=backup)
         if not rc:
             # implementation requests early termination 
-            log.debug("Early indexing termination at %s" % block_id)
+            log.debug("Early indexing termination at {}".format(block_id))
             return None
 
         return consensus_hash
 
 
     @classmethod
-    def build( cls, bitcoind_opts, end_block_id, state_engine, expected_snapshots={}, tx_filter=None ):
+    def build( cls, blockchain_opts, end_block_id, state_engine, expected_snapshots={}, tx_filter=None ):
         """
         Top-level call to process all blocks in the blockchain.
         Goes and fetches all data-bearing transactions in order,
-        and feeds them into the state engine implementation using its
-        'db_parse', 'db_check', 'db_commit', and 'db_save'
-        methods.
+        and feeds them into the state engine implementation.
         
         Note that this method can take some time (hours, days) to complete 
         when called from the first block.
@@ -1116,34 +1361,38 @@ class StateEngine( object ):
         first_block_id = state_engine.lastblock + 1
         if first_block_id >= end_block_id:
             # built 
-            log.debug("Up-to-date (%s >= %s)" % (first_block_id, end_block_id))
+            log.debug("Up-to-date ({} >= {})".format(first_block_id, end_block_id))
             return True 
 
         rc = True
         batch_size = config.BLOCK_BATCH_SIZE
-
-        log.debug("Sync virtualchain state from %s to %s" % (first_block_id, end_block_id) )
+        log.debug("Sync virtualchain state from {} to {}".format(first_block_id, end_block_id))
         
-        for block_id in xrange( first_block_id, end_block_id+1, batch_size ):
+        for block_id in range( first_block_id, end_block_id+1, batch_size ):
             
             if not rc:
                 break 
            
             last_block_id = min(block_id + batch_size, end_block_id)
-            block_ids_and_txs = transactions.get_virtual_transactions( bitcoind_opts, block_id, last_block_id, spv_last_block=end_block_id - 1, tx_filter=tx_filter )
+
+            # get the blocks and transactions from the underlying blockchain
+            block_ids_and_txs = transactions.get_virtual_transactions(state_engine.impl.get_blockchain(), blockchain_opts, block_id, last_block_id, tx_filter=tx_filter, spv_last_block=end_block_id - 1)
             if block_ids_and_txs is None:
-                raise Exception("Failed to get virtual transactions %s to %s" % (block_id, last_block_id))
+                raise Exception("Failed to get virtual transactions {} to {}".format(block_id, last_block_id))
 
             # process in order by block ID
             block_ids_and_txs.sort()
-           
             for processed_block_id, txs in block_ids_and_txs:
 
-                if state_engine.get_consensus_at( processed_block_id ) is not None:
+                if state_engine.get_consensus_at(processed_block_id) is not None:
                     raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
 
-                ops = state_engine.parse_block( processed_block_id, txs )
-                consensus_hash = state_engine.process_block( processed_block_id, ops, expected_snapshots=expected_snapshots )
+                cls.db_set_indexing(True, state_engine.impl, state_engine.working_dir)
+
+                ops = state_engine.parse_block(processed_block_id, txs)
+                consensus_hash = state_engine.process_block(processed_block_id, ops, expected_snapshots=expected_snapshots)
+
+                cls.db_set_indexing(False, state_engine.impl, state_engine.working_dir)
                 
                 if consensus_hash is None:
                     # request to stop
@@ -1151,14 +1400,14 @@ class StateEngine( object ):
                     log.debug("Stopped processing at block %s" % processed_block_id)
                     break
 
-                log.debug("CONSENSUS(%s): %s" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )))
+                log.debug("CONSENSUS({}): {}".format(processed_block_id, state_engine.get_consensus_at(processed_block_id)))
 
                 # sanity check, if given 
                 expected_consensus_hash = state_engine.get_expected_consensus_at( processed_block_id )
                 if expected_consensus_hash is not None:
                     if str(consensus_hash) != str(expected_consensus_hash):
                         rc = False
-                        log.error("FATAL: DIVERGENCE DETECTED AT %s: %s != %s" % (processed_block_id, consensus_hash, expected_consensus_hash))
+                        log.error("FATAL: DIVERGENCE DETECTED AT {}: {} != {}".format(processed_block_id, consensus_hash, expected_consensus_hash))
                         traceback.print_stack()
                         os.abort()
        
@@ -1171,16 +1420,47 @@ class StateEngine( object ):
    
     def get_consensus_at( self, block_id ):
         """
-        Get the consensus hash at a given block
+        Get the consensus hash at a given block.
+        Return the consensus hash if we have one for this block.
+        Return None if we don't
         """
-        return self.consensus_hashes.get( str(block_id), None )
+        query = 'SELECT consensus_hash FROM snapshots WHERE block_id = ?;'
+        args = (block_id,)
+
+        con = self.db_open(self.impl, self.working_dir)
+        rows = self.db_query_execute(con, query, args, verbose=False)
+        res = None
+
+        for r in rows:
+            res = r['consensus_hash']
+
+        con.close()
+        return res
+
+
+    def get_ops_hash_at(self, block_id):
+        """
+        Get the ops hash at a given block
+        """
+        query = 'SELECT ops_hash FROM snapshots WHERE block_id = ?;'
+        args = (block_id,)
+
+        con = self.db_open(self.impl, self.working_dir)
+        rows = self.db_query_execute(con, query, args)
+        res = None
+
+        for r in rows:
+            res = r['ops_hash']
+
+        con.close()
+        return res
 
 
     def get_expected_consensus_at( self, block_id ):
         """
         Get the expected consensus hash at a given block
         """
-        return self.expected_snapshots.get( str(block_id), None )
+        return self.expected_snapshots.get(block_id, None)
 
 
     def get_block_from_consensus( self, consensus_hash ):
@@ -1188,29 +1468,41 @@ class StateEngine( object ):
         Get the block number with the given consensus hash.
         Return None if there is no such block.
         """
-        # NOTE: not the most efficient thing here...
-        for (block_id, ch) in self.consensus_hashes.iteritems():
-            if str(ch) == str(consensus_hash):
-                return int(block_id)
+        query = 'SELECT block_id FROM snapshots WHERE consensus_hash = ?;'
+        args = (consensus_hash,)
 
-        return None
+        con = self.db_open(self.impl, self.working_dir)
+        rows = self.db_query_execute(con, query, args, verbose=False)
+        res = None
+
+        for r in rows:
+            res = r['block_id']
+
+        con.close()
+        return res
 
 
     def get_valid_consensus_hashes( self, block_id ):
         """
         Get the list of valid consensus hashes for a given block.
         """
+        first_block_to_check = block_id - self.impl.get_valid_transaction_window()
+
+        query = 'SELECT consensus_hash FROM snapshots WHERE block_id >= ? AND block_id <= ?;'
+        args = (first_block_to_check,block_id)
+
         valid_consensus_hashes = []
-        first_block_to_check = block_id - config.BLOCKS_CONSENSUS_HASH_IS_VALID
-        for block_number in xrange(first_block_to_check, block_id+1):
-            
-            block_number_key = str(block_number)
-            
-            if block_number_key not in self.consensus_hashes.keys():
-                continue
-            
-            valid_consensus_hashes.append( str(self.consensus_hashes[block_number_key]) )
-          
+        
+        con = self.db_open(self.impl, self.working_dir)
+        rows = self.db_query_execute(con, query, args)
+
+        for r in rows:
+            assert r['consensus_hash'] is not None
+            assert isinstance(r['consensus_hash'], (str,unicode))
+
+            valid_consensus_hashes.append(str(r['consensus_hash']))
+
+        con.close()
         return valid_consensus_hashes
     
     
@@ -1218,13 +1510,15 @@ class StateEngine( object ):
         """
         Get the current consensus hash.
         """
-        return self.get_consensus_at( str(self.lastblock) )
+        return self.get_consensus_at(self.lastblock)
+
 
     def get_current_block( self ):
         """
         Get the last block Id processed.
         """
         return self.lastblock
+
 
     def is_consensus_hash_valid( self, block_id, consensus_hash ):
         """
@@ -1235,59 +1529,270 @@ class StateEngine( object ):
         "recently stale" consensus hash under 
         heavy write load.
         """
-        
-        return str(consensus_hash) in self.get_valid_consensus_hashes( block_id )
-     
+        return str(consensus_hash) in self.get_valid_consensus_hashes(block_id)
+    
 
-    def get_rejected_ops( self ):
-        """
-        Get the op --> [operations] dict of rejected
-        operations from the last block processed.
-        """
-        return self.rejected
+def get_blockchain_height(blockchain_name, blockchain_client):
+    """
+    Get the height of the blockchain
+    Return the height as a positive int on success
+    Raise on error
+    """
+    if blockchain_name == 'bitcoin':
+        return get_bitcoin_blockchain_height(blockchain_client)
+    else:
+        raise ValueError("Unrecognized blockchain {}".format(blockchain_name))
 
 
-def get_index_range( bitcoind ):
+def get_index_range(blockchain_name, blockchain_client, impl, working_dir):
     """
     Get the range of block numbers that we need to fetch from the blockchain.
+    Requires virtualchain to have been configured with setup_virtualchain() if impl=None
     
-    Return None, None if we fail to connect to bitcoind.
+    Return None, None if we fail to connect to the blockchain
     """
 
-    start_block = config.get_first_block_id()
-       
+    start_block = config.get_first_block_id(impl)
     try:
-       current_block = int(bitcoind.getblockcount())
-        
+        current_block = get_blockchain_height(blockchain_name, blockchain_client)
     except Exception, e:
-       log.exception(e)
-       return None, None
+        log.exception(e)
+        return None, None
 
-    # check our last known file
-    lastblock_file = config.get_lastblock_filename()
-    
-    saved_block = 0
-    if os.path.isfile(lastblock_file):
-         
-        with open(lastblock_file, 'r') as fin:
-           try:
-              saved_block = fin.read()
-              saved_block = int(saved_block)
-           except:
-              saved_block = 0
-              try:
-                 os.unlink(lastblock_file)
-              except OSError, oe:
-                 pass 
-              
-              pass 
+    saved_block = StateEngine.get_lastblock(impl, working_dir)
 
-    if saved_block == 0:
-        pass
+    if saved_block is None:
+        saved_block = 0
     elif saved_block == current_block:
         start_block = saved_block
     elif saved_block < current_block:
         start_block = saved_block + 1
 
     return start_block, current_block
+
+
+def sqlite3_find_tool():
+    """
+    Find the sqlite3 binary
+    Return the path to the binary on success
+    Return None on error
+    """
+
+    # find sqlite3
+    path = os.environ.get("PATH", None)
+    if path is None:
+        path = "/usr/local/bin:/usr/bin:/bin"
+
+    sqlite3_path = None
+    dirs = path.split(":")
+    for pathdir in dirs:
+        if len(pathdir) == 0:
+            continue
+
+        sqlite3_path = os.path.join(pathdir, 'sqlite3')
+        if not os.path.exists(sqlite3_path):
+            continue
+
+        if not os.path.isfile(sqlite3_path):
+            continue
+
+        if not os.access(sqlite3_path, os.X_OK):
+            continue
+
+        break
+
+    if sqlite3_path is None:
+        log.error("Could not find sqlite3 binary")
+        return None
+
+    return sqlite3_path
+
+
+def sqlite3_backup(src_path, dest_path):
+    """
+    Back up a sqlite3 database, while ensuring
+    that no ongoing queries are being executed.
+
+    Return True on success
+    Return False on error.
+    """
+
+    # find sqlite3
+    sqlite3_path = sqlite3_find_tool()
+    if sqlite3_path is None:
+        log.error("Failed to find sqlite3 tool")
+        return False
+
+    sqlite3_cmd = [sqlite3_path, '{}'.format(src_path), '.backup "{}"'.format(dest_path)]
+    rc = None
+    backoff = 1.0
+
+    out = None
+    err = None
+
+    try:
+        while True:
+            log.debug("{}".format(" ".join(sqlite3_cmd)))
+            p = subprocess.Popen(sqlite3_cmd, shell=False, close_fds=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, err = p.communicate()
+            rc = p.wait()
+
+            if rc != 0:
+                if "database is locked" in out.lower() or "database is locked" in err.lower():
+                    # try again
+                    log.error("Database {} is locked; trying again in {} seconds".format(src_path, backoff))
+                    time.sleep(backoff)
+                    backoff += 2 * backoff + random.random() * random.randint(0, int(backoff))
+                    continue
+
+                elif 'is not a database' in out.lower() or 'is not a database' in err.lower():
+                    # not a valid sqlite3 file
+                    log.error("File {} is not a SQLite database".format(src_path))
+                    return False
+ 
+            else:
+                break
+
+    except Exception, e:
+        log.exception(e)
+        return False
+
+    if not os.WIFEXITED(rc):
+        # bad exit 
+        # failed for some other reason
+        log.error("Backup failed: out='{}', err='{}', rc={}".format(out, err, rc))
+        return False
+    
+    if os.WEXITSTATUS(rc) != 0:
+        # bad exit
+        log.error("Backup failed: out='{}', err='{}', exit={}".format(out, err, os.WEXITSTATUS(rc)))
+        return False
+
+    return True
+
+
+def state_engine_replay_block(existing_state_engine, new_state_engine, block_height, expected_snapshots={}):
+    """
+    Extract the existing chain state transactions from the existing state engine at a particular block height,
+    parse them using the new state engine, and process them using the new state engine.
+
+    Returns the consensus hash of the block on success.
+    """
+    
+    assert new_state_engine.lastblock + 1 == block_height, 'Block height mismatch: {} + 1 != {}'.format(new_state_engine.lastblock, block_height)
+
+    db_con = StateEngine.db_open(existing_state_engine.impl, existing_state_engine.working_dir)
+    chainstate_block = existing_state_engine.db_chainstate_get_block(db_con, block_height)
+    db_con.close()
+
+    log.debug("{} transactions accepted at block {} in chainstate {}; replaying in {}".format(len(chainstate_block), block_height, existing_state_engine.working_dir, new_state_engine.working_dir))
+
+    parsed_txs = dict([(txdata['txid'], transactions.tx_parse(existing_state_engine.impl.get_blockchain(), txdata['tx_hex'])) for txdata in chainstate_block])
+    txs = [
+        {
+            'txid': txdata['txid'],
+            'txindex': txdata['txindex'],
+            'nulldata': '{}{}{}'.format(existing_state_engine.impl.get_magic_bytes().encode('hex'), txdata['opcode'].encode('hex'), txdata['data_hex']),
+            'ins': parsed_txs[txdata['txid']]['ins'],
+            'outs': parsed_txs[txdata['txid']]['outs'],
+            'senders': txdata['senders'],
+            'fee': txdata['fee'],
+            'hex': txdata['tx_hex']
+        }
+        for txdata in chainstate_block]
+
+    new_state_engine.db_set_indexing(True, new_state_engine.impl, new_state_engine.working_dir)
+
+    ops = new_state_engine.parse_block(block_height, txs)
+    consensus_hash = new_state_engine.process_block(block_height, ops, expected_snapshots=expected_snapshots)
+
+    new_state_engine.db_set_indexing(False, new_state_engine.impl, new_state_engine.working_dir)
+
+    return consensus_hash
+
+
+def state_engine_replay(consensus_impl, existing_working_dir, new_state_engine, target_block_height, start_block=None, initial_snapshots={}, expected_snapshots={}):
+    """
+    Given consensus rules, a target block height, and a path to an existing chainstate db, replay the chain state's virtual transactions
+    through the consensus rules into a given directory (working_dir).
+
+    Optionally check that the snapshots in @expected_snapshots match up as we verify.
+    @expected_snapshots maps str(block_height) to str(consensus hash)
+
+    Return the consensus hash calculated at the target block height
+    Return None on verification failure (i.e. we got a different consensus hash than one for the same block in expected_snapshots)
+    """
+    
+    assert hasattr(consensus_impl, 'get_opcodes')
+    assert hasattr(consensus_impl, 'get_magic_bytes')
+    assert hasattr(consensus_impl, 'get_opfields')
+    assert hasattr(consensus_impl, 'get_first_block_id')
+
+    consensus_opcodes = consensus_impl.get_opcodes()
+    consensus_magic_bytes = consensus_impl.get_magic_bytes()
+    consensus_opfields = consensus_impl.get_opfields()
+
+    existing_state_engine = StateEngine(consensus_impl, existing_working_dir)
+    
+    # set up existing state engine 
+    rc = existing_state_engine.db_setup()
+    if not rc:
+        # do not touch the existing db
+        raise Exception("Existing state in {} is unusable or corrupt".format(os.path.dirname(db_path)))
+
+    if start_block is None:
+        # maybe we're resuming?
+        start_block = new_state_engine.get_lastblock(new_state_engine.impl, new_state_engine.working_dir)
+        if start_block is None:
+            # starting from scratch
+            start_block = consensus_impl.get_first_block_id()
+
+    log.debug("Rebuilding database from {} to {}".format(start_block, target_block_height))
+
+    consensus_hashes = {}
+    for block_height in range(start_block, target_block_height+1):
+        
+        # recover virtualchain transactions from the existing db and feed them into the new db
+        consensus_hash = state_engine_replay_block(existing_state_engine, new_state_engine, block_height, expected_snapshots=expected_snapshots)
+
+        log.debug("VERIFY CONSENSUS({}): {}".format(block_height, consensus_hash))
+        consensus_hashes[block_height] = consensus_hash
+
+        if block_height in expected_snapshots:
+            if expected_snapshots[block_height] != consensus_hash:
+                log.error("DATABASE IS NOT CONSISTENT AT {}: {} != {}".format(block_height, expected_snashots[block_height], consensus_hash))
+                return None
+
+    # final consensus hash
+    return consensus_hashes[target_block_height]
+
+
+def state_engine_verify(trusted_consensus_hash, consensus_block_height, consensus_impl, untrusted_working_dir, new_state_engine, start_block=None, expected_snapshots={}):
+    """
+    Verify that a database is consistent with a
+    known-good consensus hash.
+
+    This algorithm works by creating a new database,
+    parsing the untrusted database, and feeding the untrusted
+    operations into the new database block-by-block.  If we
+    derive the same consensus hash, then we can trust the
+    database.
+
+    Return True if consistent with the given consensus hash at the given consensus block height
+    Return False if not
+    """
+    
+    assert hasattr(consensus_impl, 'get_initial_snapshots')
+
+    final_consensus_hash = state_engine_replay(consensus_impl, untrusted_working_dir, new_state_engine, consensus_block_height, \
+                                               start_block=start_block, initial_snapshots=consensus_impl.get_initial_snapshots(), expected_snapshots=expected_snapshots)
+
+    # did we reach the consensus hash we expected?
+    if final_consensus_hash is not None and final_consensus_hash == trusted_consensus_hash:
+        return True
+
+    else:
+        log.error("Unverifiable database state stored in '{}': {} != {}".format(untrusted_working_dir, final_consensus_hash, trusted_consensus_hash))
+        return False
+
 
