@@ -247,7 +247,7 @@ def btc_tx_deserialize(_tx):
     {
         ins: [
             {
-                output: { hash: ..., index: ... }, 
+                outpoint: { hash: ..., index: ... }, 
                 script: ...,
                 sequence: ...,
                 witness_script: ...,        # not included if not segwit
@@ -474,7 +474,7 @@ def btc_bitcoind_tx_serialize( tx ):
              tx_serialized = tx['hex']
              return str(tx_serialized)
 
-         log.error("Key error in :\n%s" % simplejson.dumps(tx, indent=4, sort_keys=True))
+         log.error("Key error in:\n%s" % simplejson.dumps(tx, indent=4, sort_keys=True))
          traceback.print_exc()
          raise ke
 
@@ -528,7 +528,7 @@ def btc_tx_get_hash( tx_serialized, hashcode=None ):
         return binascii.hexlify( hashing.bin_double_sha256(tx_bin)[::-1] )
 
 
-def tx_script_to_asm( script_hex ):
+def btc_tx_script_to_asm( script_hex ):
     """
     Decode a script into assembler
     """
@@ -561,6 +561,7 @@ def tx_script_to_asm( script_hex ):
     return " ".join(script_tokens)
 
 
+# TODO; move to transactions.py
 def tx_output_has_data(output):
     """
     High-level API (meant to be usable across blockchains)
@@ -570,6 +571,18 @@ def tx_output_has_data(output):
     return int(output['script'][0:2], 16) == OPCODE_VALUES['OP_RETURN']
 
 
+def btc_tx_output_script_has_data(output_script):
+    """
+    Does a btc output script have data? i.e. is it an OP_RETURN?
+    The script must be hex-encoded
+    """
+    if len(output_script) < 2:
+        return False
+
+    return int(output_script[0:2], 16) == OPCODE_VALUES['OP_RETURN']
+
+
+# TODO: move to transactions.py
 def tx_extend(partial_tx_hex, new_inputs, new_outputs):
     """
     High-level API (meant to be usable across blockchains)
@@ -598,7 +611,7 @@ def tx_extend(partial_tx_hex, new_inputs, new_outputs):
     return new_unsigned_tx
 
 
-def tx_der_encode_integer(r):
+def btc_tx_der_encode_integer(r):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded integer
@@ -624,7 +637,7 @@ def tx_der_encode_integer(r):
         return b("\x02") + int2byte(len(s)+1) + b("\x00") + s
 
 
-def tx_der_encode_length(l):
+def btc_tx_der_encode_length(l):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded length field
@@ -645,7 +658,7 @@ def tx_der_encode_length(l):
     return int2byte(0x80 | llen) + s
 
 
-def tx_der_encode_sequence(*encoded_pieces):
+def btc_tx_der_encode_sequence(*encoded_pieces):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded sequence
@@ -655,10 +668,10 @@ def tx_der_encode_sequence(*encoded_pieces):
     """
     # borrowed from python-ecdsa
     total_len = sum([len(p) for p in encoded_pieces])
-    return b('\x30') + tx_der_encode_length(total_len) + b('').join(encoded_pieces)
+    return b('\x30') + btc_tx_der_encode_length(total_len) + b('').join(encoded_pieces)
 
 
-def tx_der_encode_signature(r, s):
+def btc_tx_der_encode_signature(r, s):
     """
     High-level API (meant to be usable across blockchains)
     Return a DER-encoded signature as a 2-item sequence
@@ -667,7 +680,7 @@ def tx_der_encode_signature(r, s):
     by Brian Warner.  Subject to the MIT license.
     """
     # borrowed from python-ecdsa
-    return tx_der_encode_sequence(tx_der_encode_integer(r), tx_der_encode_integer(s))
+    return btc_tx_der_encode_sequence(btc_tx_der_encode_integer(r), btc_tx_der_encode_integer(s))
 
 
 def btc_tx_sighash( tx, idx, script, hashcode=SIGHASH_ALL):
@@ -839,7 +852,7 @@ def btc_tx_make_input_signature(tx, idx, prevout_script, privkey_str, hashcode):
     # assert ecdsalib.verify_digest( txhash, pubk_uncompressed_hex, sigb64 )
 
     sig_r, sig_s = ecdsalib.decode_signature(sigb64)
-    sig_bin = tx_der_encode_signature(sig_r, sig_s)
+    sig_bin = btc_tx_der_encode_signature(sig_r, sig_s)
     sig = sig_bin.encode('hex') + encoding.encode(hashcode, 16, 2)
 
     return sig
@@ -876,7 +889,7 @@ def btc_tx_make_input_signature_segwit(tx, idx, prevout_amount, prevout_script, 
     # assert ecdsalib.verify_digest( txhash, pubk_uncompressed_hex, sigb64 )
 
     sig_r, sig_s = ecdsalib.decode_signature(sigb64)
-    sig_bin = tx_der_encode_signature(sig_r, sig_s)
+    sig_bin = btc_tx_der_encode_signature(sig_r, sig_s)
     sig = sig_bin.encode('hex') + encoding.encode(hashcode, 16, 2)
 
     # print 'segwit signature: {}'.format(sig)
@@ -1145,6 +1158,8 @@ def btc_script_classify(scriptpubkey, private_key_info=None):
         return 'p2wsh'
 
     script_tokens = btc_script_deserialize(scriptpubkey)
+    if len(script_tokens) == 0:
+        return None
 
     if script_tokens[0] == OPCODE_VALUES['OP_RETURN']:
         return "nulldata"
@@ -1177,6 +1192,7 @@ def btc_privkey_scriptsig_classify(private_key_info):
     return None
 
 
+# TODO: move to transactions.py
 def tx_sign_input(tx, idx, prevout_script, prevout_amount, private_key_info, hashcode=SIGHASH_ALL, hashcodes=None, segwit=None, scriptsig_type=None, redeem_script=None, witness_script=None):
     """
     Sign a particular input in the given transaction.
@@ -1196,6 +1212,7 @@ def tx_sign_input(tx, idx, prevout_script, prevout_amount, private_key_info, has
     return btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scriptsig_type, hashcode=hashcode, hashcodes=hashcodes, redeem_script=redeem_script, witness_script=witness_script)
 
 
+# TODO: move to transactions.py
 def tx_sign_all_unsigned_inputs(private_key_info, prev_outputs, unsigned_tx_hex, scriptsig_type=None, segwit=None):
     """
     Sign all unsigned inputs with a given key.
@@ -1372,7 +1389,7 @@ def btc_tx_output_parse_script( scriptpubkey ):
         script_type = "nonstandard"
 
     ret = {
-        "asm": tx_script_to_asm(scriptpubkey),
+        "asm": btc_tx_script_to_asm(scriptpubkey),
         "hex": scriptpubkey,
         "type": script_type
     }
