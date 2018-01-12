@@ -30,5 +30,5 @@ from .multisig import *
 from .authproxy import *
 
 from .spv import SPVClient
-from .blocks import BlockchainDownloader
+from .blocks import BlockchainDownloader, get_bitcoin_blockchain_height
 from .bits import *
