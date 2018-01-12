@@ -29,14 +29,7 @@ from .lib.blockchain import session
 
 log = config.get_logger("virtualchain")
 
-# global instance of our implementation's state engine
-state_engine = None
-
-# global flag indicating that we're running
-running = False
-
-
-def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshots={}, tx_filter=None ):
+def sync_virtualchain(blockchain_opts, last_block, state_engine, expected_snapshots={}, tx_filter=None ):
     """
     Synchronize the virtual blockchain state up until a given block.
 
@@ -57,7 +50,7 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshot
         try:
 
             # advance state
-            rc = indexer.StateEngine.build(bitcoind_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots, tx_filter=tx_filter )
+            rc = indexer.StateEngine.build(blockchain_opts, last_block + 1, state_engine, expected_snapshots=expected_snapshots, tx_filter=tx_filter )
             break
         
         except Exception, e:
@@ -69,18 +62,6 @@ def sync_virtualchain(bitcoind_opts, last_block, state_engine, expected_snapshot
     log.info(time_taken)
 
     return rc
-
-
-def setup_virtualchain(impl=None, bitcoind_connection_factory=None, index_worker_env=None):
-    """
-    Set up the virtual blockchain.
-    Use the given virtual blockchain core logic.
-    """
-
-    global connect_bitcoind
-
-    if impl is not None:
-        config.set_implementation(impl)
 
 
 def virtualchain_set_opfields( op, **fields ):
@@ -104,7 +85,7 @@ def virtualchain_set_opfields( op, **fields ):
     return op
 
 
-def connect_bitcoind( opts ):
+def connect_bitcoind(opts):
     """
     Top-level method to connect to bitcoind,
     using either a built-in default, or a module
