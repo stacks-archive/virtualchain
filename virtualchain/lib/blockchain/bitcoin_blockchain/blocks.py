@@ -265,23 +265,11 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
                             # save sender info 
                             self.add_sender_info(sender_txid, nulldata_input_vout_index, sender_tx['outs'][nulldata_input_vout_index])
-
-                            '''
-                            # regular tx, not coinbase
-                            assert nulldata_input_vout_index < len(sender_tx['vout']), "Ouptut index %s is out of bounds for %s" % (out_index, sender_txid)
-                        
-                            # save sender info
-                            self.add_sender_info( sender_txid, nulldata_input_vout_index, sender_tx['vout'][nulldata_input_vout_index] )
-                            '''
                         
                         else:
 
-                            self.add_sender_info(sender_txid, nulldata_input_vout_index, sender_tx['outs'][0])
-
-                            '''
                             # coinbase
-                            self.add_sender_info( sender_txid, nulldata_input_vout_index, sender_tx['vout'][0] )
-                            '''
+                            self.add_sender_info(sender_txid, nulldata_input_vout_index, sender_tx['outs'][0])
 
                     # update accounting
                     self.num_txs_received += 1
@@ -310,18 +298,6 @@ class BlockchainDownloader( BitcoinBasicClient ):
                             sinfo['txid'], inp['outpoint']['index'], sinfo['nulldata_vin_outpoint'], simplejson.dumps(tx, indent=4, sort_keys=True))
 
                     assert inp['outpoint']['hash'] == sinfo['txid'], 'Mismatched sender/input txid ({} != {}); dump follows\n{}'.format(inp['txid'], sender['txid'], simplejson.dumps(tx, indent=4, sort_keys=True))
-
-                '''
-                for i in xrange(0, len(tx['vin'])):
-                    inp = tx['vin'][i]
-                    sinfo = tx['senders'][i]
-                   
-                    assert self.sender_info.has_key(sinfo['txid']), "Surreptitious sender tx %s" % sinfo['txid']
-                    assert inp['vout'] == sinfo['nulldata_vin_outpoint'], "Mismatched sender/input index (%s: %s != %s); dump follows\n%s" % \
-                                        (sinfo['txid'], inp['vout'], sinfo['nulldata_vin_outpoint'], simplejson.dumps(tx, indent=4, sort_keys=True))
-
-                    assert inp['txid'] == sinfo['txid'], "Mismatched sender/input txid (%s != %s); dump follows\n" % (inp['txid'], sender['txid'], simplejson.dumps(tx, indent=4, sort_keys=True))
-                '''
 
         return True
 
@@ -450,18 +426,8 @@ class BlockchainDownloader( BitcoinBasicClient ):
         script_info = bits.btc_tx_output_parse_script(script_pubkey)
         script_type = script_info['type']
         addresses = script_info.get('addresses', [])
-
-        '''
-        # value_in = sender_out_data['value']
-        value_in_satoshis = sender_out_data['value_satoshis']
-        script_pubkey = sender_out_data['scriptPubKey']['hex']
-        script_type = sender_out_data['scriptPubKey']['type']
-        addresses = sender_out_data['scriptPubKey'].get("addresses", [])
-        '''
         
         sender_info = {
-            # "amount": value_in,             # NOTE: this is a float.  Don't rely on it for consensus!
-            # "units": int(value_in * 10**8),
             "value": value_in_satoshis,
             "script_pubkey": script_pubkey,
             "script_type": script_type,
@@ -471,7 +437,6 @@ class BlockchainDownloader( BitcoinBasicClient ):
         }
         
         # debit this tx's total value
-        # self.block_info[block_hash]['txns'][relindex]['fee'] += int(value_in * 10**8)
         self.block_info[block_hash]['txns'][relindex]['fee'] += value_in_satoshis
 
         # remember this sender, but put it in the right place.
@@ -513,6 +478,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
             "nulldata": None,
             "ins": None,     # library-specific field, to be passed to the state engine
             "outs": None,    # library-specific field, to be passed to the state engine
+            "tx_merkle_path": None
         }
         
         # keep these around too, since this is what gets fed into the virtualchain state engine implementation 
@@ -578,16 +544,29 @@ class BlockchainDownloader( BitcoinBasicClient ):
         log.debug("handle block %s (%s)" % (height, block_hash))
 
         # does this block's transaction hashes match the merkle root?
-        tx_hashes = [block.txns[i].calculate_hash() for i in xrange(0, len(block.txns))]
-        mr = merkle.MerkleTree( tx_hashes ).root()
+        tx_hashes = [block.txns[i].calculate_hash() for i in range(0, len(block.txns))]
+        block_merkle_tree = merkle.MerkleTree(tx_hashes)
+        mr = block_merkle_tree.root()
 
         if mr != header['merkle_root']:
             log.error("Merkle root of %s (%s) mismatch: expected %s, got %s" % (block_hash, height, header['merkle_root'], mr))
             return
+
+        merkle_paths = {}       # map txid to merkle path
+
+        # make sure we have merkle paths for each tx
+        for i in range(0, len(block.txns)):
+            txid = block.txns[i].calculate_hash()
+            merkle_path = block_merkle_tree.path(txid)
+            if merkle_path is None:
+                log.error("No merkle path for {}".format(txid))
+                return 
+
+            merkle_paths[txid] = merkle_path
  
         nulldata_txs = []
         relindex = 0
-        for txindex in xrange(0, len(block.txns)):
+        for txindex in range(0, len(block.txns)):
 
             txdata = self.parse_tx( block.txns[txindex], header, block_hash, txindex )
 
@@ -619,6 +598,9 @@ class BlockchainDownloader( BitcoinBasicClient ):
 
             # remember nulldata, even if it's empty
             txdata['nulldata'] = nulldata_payload 
+
+            # remember merkle path
+            txdata['tx_merkle_path'] = merkle_paths[txdata['txid']]
             
             # calculate total output (part of fee; will be debited when we discover the senders)
             # NOTE: this works because we have out['value'] as type Decimal
