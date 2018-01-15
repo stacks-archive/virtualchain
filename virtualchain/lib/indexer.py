@@ -52,6 +52,7 @@ RESERVED_KEYS = [
    'virtualchain_txid',
    'virtualchain_txindex',
    'virtualchain_txhex',
+   'virtualchain_tx_merkle_path',
    'virtualchain_senders',
    'virtualchain_data_hex',
    'virtualchain_fee',
@@ -66,6 +67,7 @@ CHAINSTATE_FIELDS = [
     'data_hex',
     'senders',
     'tx_hex',
+    'tx_merkle_path',
     'fee'
 ]
 
@@ -79,6 +81,7 @@ CREATE TABLE chainstate( txid TEXT NOT NULL,
                          data_hex TEXT NOT NULL,
                          senders TEXT NOT NULL,
                          tx_hex TEXT NOT NULL,
+                         tx_merkle_path TEXT NOT NULL,
                          fee INT NOT NULL,
                          PRIMARY KEY(txid,block_id,vtxindex) );
 
@@ -453,6 +456,7 @@ class StateEngine( object ):
                 'data_hex': str(r['data_hex']),
                 'senders': simplejson.loads(r['senders']),
                 'tx_hex': str(r['tx_hex']),
+                'tx_merkle_path': str(r['tx_merkle_path']),
                 'fee': r['fee']
             }
 
@@ -857,12 +861,14 @@ class StateEngine( object ):
             opcode = virtualchain_op_hints['virtualchain_opcode']
             txindex = virtualchain_op_hints['virtualchain_txindex']
             vtxindex = i
+            merkle_path = virtualchain_op_hints['virtualchain_tx_merkle_path']
 
             vtx_data = {
                 'txid': txid,
                 'senders': simplejson.dumps(senders),
                 'data_hex': data_hex,
                 'tx_hex': tx_hex,
+                'tx_merkle_path': merkle_path,
                 'fee': fee,
                 'opcode': opcode,
                 'txindex': txindex,
@@ -1091,6 +1097,7 @@ class StateEngine( object ):
         senders = tx['senders']
         fee = tx['fee']
         txhex = tx['hex']
+        merkle_path = tx['tx_merkle_path']
         
         if not is_hex(data_hex):
             # should always work; the tx downloader converts the binary string to hex
@@ -1136,6 +1143,7 @@ class StateEngine( object ):
         op['virtualchain_txid'] = tx['txid']
         op['virtualchain_txindex'] = tx['txindex']
         op['virtualchain_txhex'] = txhex
+        op['virtualchain_tx_merkle_path'] = merkle_path
         op['virtualchain_senders'] = senders
         op['virtualchain_fee'] = fee
         op['virtualchain_data_hex'] = op_payload.encode('hex')
@@ -1697,7 +1705,8 @@ def state_engine_replay_block(existing_state_engine, new_state_engine, block_hei
             'outs': parsed_txs[txdata['txid']]['outs'],
             'senders': txdata['senders'],
             'fee': txdata['fee'],
-            'hex': txdata['tx_hex']
+            'hex': txdata['tx_hex'],
+            'tx_merkle_path': txdata['tx_merkle_path'],
         }
         for txdata in chainstate_block]
 
