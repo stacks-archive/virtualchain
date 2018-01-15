@@ -53,12 +53,6 @@ def count_bytes(hex_s):
     return len(hex_s)/2
 
 
-def flip_endian(s):
-    if is_hex:
-        return hexlify(unhexlify(s)[::-1])
-    return s[::-1]
-
-
 def bin_hash160(s, hex_format=False):
     """ s is in hex or binary format
     """
