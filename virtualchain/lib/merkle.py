@@ -208,8 +208,8 @@ class MerkleTree(object):
                 # append left sibling
                 sibling_hash = None
                 if leaf_index+1 >= len(self.rows[i]):
-                    # this is the leaf row, and we're doubling-up the last hash
-                    assert leaf_index+1 == len(self.rows[i]) and i == 0
+                    # double-up the last hash
+                    assert leaf_index+1 == len(self.rows[i]), 'leaf_index = {}, i = {}, len(rows[i]) = {}, rows[0] = {}'.format(leaf_index, i, len(self.rows[i]), ','.join(r.encode('hex') for r in self.rows[0]))
                     sibling_hash = self.rows[i][-1]
                 else:
                     sibling_hash = self.rows[i][leaf_index+1]
@@ -248,16 +248,17 @@ if __name__ == "__main__":
         ['abcde' for _ in range(0,32)],
         ['abcde' for _ in range(0,31)],
         ['abcde' for _ in range(0,1)],
+        [h.decode('hex') for h in ['02125585a9b812347c21c9f1827463ccb93a5096fb1f846b83652353fbb53418','f5c366f5aa9f21b4823ac167e8a062805f54bf99cb56be3fd1bd500bd5a20609','7358bf608d6ed1010cc86c1be5df4f773e7a2d6f00f3f3284bd742a55ea4a382','952dfe16fb9de054e291ef5d6dbacf381a93dffc12fdea74305fe3723016bf4b','a6c38dd08339595abd473c2351018d6d9ec968a44a53c6f06666141ec52568ae','aa950063768b7de1dbb0ae3bc3d872b3b7c8ac63defa02c7fe5e7cae93d11d23','c8d64f8ac60cbae1dd97cf373a4114097586fee63a8fed2e46add59eba7c8072','6a49bc047d9330cadeee4558da2a4da76aff1419d33f4b3d2800a55f26977fe4','b1eb9cae861e31b7177ce87fc3afde1618f69349dc1bf3e11deb86ea8586cf67','d8335aca79d8a0d20edd653905cc5d7a4a3e1986269d56b5949d08baad0046df','b58bfc1ab8c3557fb5de0014c58469f9ff6b68f407983fbe0b5387bd6485fc86']],
     ]
 
     for i, data in enumerate(fixtures):
-        print '\nfixture {}\n'.format(i)
+        print '\nfixture {} ({} entries)\n'.format(i, len(data))
 
         data_hashes = [bin_to_hex_reversed(bin_double_sha256(d)) for d in data]
 
         mt = MerkleTree(data_hashes)
         mps = []
-        for dh in data_hashes:
+        for j, dh in enumerate(data_hashes):
             mp = mt.path(dh, serialize=False)
             mp_str = mt.path_serialize(mp)
             recombined_mp = mt.path_deserialize(mp_str)
@@ -265,7 +266,8 @@ if __name__ == "__main__":
             assert mp == recombined_mp
 
             mps.append(mp_str)
-
+            
+            print 'dh[{}] = {}'.format(j, dh)
             print 'path from {} to {} is {}'.format(dh, mt.root(), mp)
             print 'path from {} to {} is {}'.format(dh, mt.root(), mp_str)
 
