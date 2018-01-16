@@ -229,9 +229,9 @@ class StateEngine( object ):
         """
         if self.db_exists(impl=self.impl, working_dir=self.working_dir):
             # resuming from previous indexing
-            # unclean shutdown?
-            if self.db_is_indexing(self.impl, self.working_dir):
-                log.error("Unclean shutdown detected")
+            # read/write and unclean shutdown?
+            if not self.read_only and self.db_is_indexing(self.impl, self.working_dir):
+                log.error("Unclean shutdown detected on read/write open")
                 return False
         
         else:
@@ -1394,7 +1394,7 @@ class StateEngine( object ):
 
                 if state_engine.get_consensus_at(processed_block_id) is not None:
                     raise Exception("Already processed block %s (%s)" % (processed_block_id, state_engine.get_consensus_at( processed_block_id )) )
-
+                
                 cls.db_set_indexing(True, state_engine.impl, state_engine.working_dir)
 
                 ops = state_engine.parse_block(processed_block_id, txs)
@@ -1695,7 +1695,7 @@ def state_engine_replay_block(existing_state_engine, new_state_engine, block_hei
 
     log.debug("{} transactions accepted at block {} in chainstate {}; replaying in {}".format(len(chainstate_block), block_height, existing_state_engine.working_dir, new_state_engine.working_dir))
 
-    parsed_txs = dict([(txdata['txid'], transactions.tx_parse(existing_state_engine.impl.get_blockchain(), txdata['tx_hex'])) for txdata in chainstate_block])
+    parsed_txs = dict([(txdata['txid'], transactions.tx_parse(txdata['tx_hex'], blockchain=existing_state_engine.impl.get_blockchain())) for txdata in chainstate_block])
     txs = [
         {
             'txid': txdata['txid'],
