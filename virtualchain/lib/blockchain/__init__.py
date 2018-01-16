@@ -24,9 +24,12 @@
 import transactions 
 import session
 
-from transactions import get_virtual_transactions
-
 from session import BitcoindConnection, create_bitcoind_connection
 from session import connect_bitcoind_impl as default_connect_bitcoind 
+
+from address import *
+from keys import *
+from scripts import *
+from transactions import *
 
 from bitcoin_blockchain import *

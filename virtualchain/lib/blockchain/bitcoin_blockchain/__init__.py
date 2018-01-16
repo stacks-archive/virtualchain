@@ -21,8 +21,8 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, script_hex_to_address, version_byte, is_multisig_script, \
-        make_payment_script, make_data_script, calculate_change_amount, address_reencode, btc_is_p2sh_script, btc_is_p2sh_address, MAX_DATA_LEN
+from .keys import BitcoinPublicKey, BitcoinPrivateKey, hex_hash160_to_address, btc_script_hex_to_address, version_byte, btc_is_multisig_script, \
+        btc_make_payment_script, btc_make_data_script, btc_address_reencode, btc_is_p2sh_script, btc_is_p2sh_address, MAX_DATA_LEN
 
 from .fees import get_tx_fee_per_byte, get_tx_fee, tx_estimate_signature_len
 
