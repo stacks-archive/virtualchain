@@ -443,7 +443,7 @@ class StateEngine( object ):
         query = 'SELECT * FROM chainstate WHERE block_id = ? ORDER BY vtxindex;'
         args = (block_height,)
 
-        rows = cls.db_query_execute(cur, query, args)
+        rows = cls.db_query_execute(cur, query, args, verbose=False)
         ret = []
 
         for r in rows:
@@ -537,7 +537,7 @@ class StateEngine( object ):
         query = 'SELECT block_id,consensus_hash FROM snapshots' + range_query + ';'
         args = range_args
 
-        rows = cls.db_query_execute(con, query, range_args)
+        rows = cls.db_query_execute(con, query, range_args, verbose=False)
         ret = {}
         block_min = None
         block_max = None
@@ -583,7 +583,7 @@ class StateEngine( object ):
         query = 'SELECT block_id,ops_hash FROM snapshots' + range_query + ';'
         args = range_args
 
-        rows = cls.db_query_execute(con, query, range_args)
+        rows = cls.db_query_execute(con, query, range_args, verbose=False)
         ret = {}
         block_min = None
         block_max = None
@@ -847,7 +847,8 @@ class StateEngine( object ):
         # start a transaction to store the new data
         db_con = self.db_open(self.impl, self.working_dir)
         cur = db_con.cursor()
-        cur.execute("BEGIN")
+
+        self.db_query_execute(cur, "BEGIN", (), verbose=False)
         
         # add chainstate
         for i, (accepted_op, virtualchain_op_hints) in enumerate(zip(accepted_ops, virtualchain_ops_hints)):
@@ -880,7 +881,7 @@ class StateEngine( object ):
             
         # update snapshot info
         self.db_snapshot_append(cur, block_id, consensus_hash, ops_hash, int(time.time()))
-        cur.execute("END")
+        self.db_query_execute(cur, "END", (), verbose=False)
         db_con.close()
 
         # make new backups and clear old ones
@@ -1454,7 +1455,7 @@ class StateEngine( object ):
         args = (block_id,)
 
         con = self.db_open(self.impl, self.working_dir)
-        rows = self.db_query_execute(con, query, args)
+        rows = self.db_query_execute(con, query, args, verbose=False)
         res = None
 
         for r in rows:
@@ -1502,7 +1503,7 @@ class StateEngine( object ):
         valid_consensus_hashes = []
         
         con = self.db_open(self.impl, self.working_dir)
-        rows = self.db_query_execute(con, query, args)
+        rows = self.db_query_execute(con, query, args, verbose=False)
 
         for r in rows:
             assert r['consensus_hash'] is not None
