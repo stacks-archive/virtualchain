@@ -30,8 +30,8 @@ import keylib
 from six import int2byte, b, integer_types
 from decimal import *
 
-from .keys import script_hex_to_address, address_reencode, is_singlesig, is_multisig, make_payment_script, \
-        btc_script_deserialize, btc_script_serialize, btc_is_singlesig_segwit, btc_is_multisig_segwit, get_singlesig_privkey, \
+from .keys import btc_script_hex_to_address, btc_is_singlesig, btc_is_multisig, \
+        btc_script_deserialize, btc_script_serialize, btc_is_singlesig_segwit, btc_is_multisig_segwit, btc_get_singlesig_privkey, \
         btc_make_p2sh_p2wpkh_redeem_script, btc_make_p2sh_p2wsh_redeem_script
 
 from .opcodes import *
@@ -240,7 +240,7 @@ def btc_witness_script_deserialize(_script):
     return witness_stack
 
 
-def btc_tx_deserialize(_tx):
+def btc_tx_deserialize(_tx, **blockchain_opts):
     """
     Given a hex-encoded transaction, decode it into an object
     with the following structure:
@@ -561,17 +561,15 @@ def btc_tx_script_to_asm( script_hex ):
     return " ".join(script_tokens)
 
 
-# TODO; move to transactions.py
-def tx_output_has_data(output):
+def btc_tx_output_has_data(output, **blockchain_opts):
     """
-    High-level API (meant to be usable across blockchains)
     Does this output have user data?
     @output must be an element from the 'outs' list in btc_tx_deserialize()
     """
-    return int(output['script'][0:2], 16) == OPCODE_VALUES['OP_RETURN']
+    return btc_tx_output_script_has_data(output['script'], **blockchain_opts)
 
 
-def btc_tx_output_script_has_data(output_script):
+def btc_tx_output_script_has_data(output_script, **blockchain_opts):
     """
     Does a btc output script have data? i.e. is it an OP_RETURN?
     The script must be hex-encoded
@@ -582,10 +580,8 @@ def btc_tx_output_script_has_data(output_script):
     return int(output_script[0:2], 16) == OPCODE_VALUES['OP_RETURN']
 
 
-# TODO: move to transactions.py
-def tx_extend(partial_tx_hex, new_inputs, new_outputs):
+def btc_tx_extend(partial_tx_hex, new_inputs, new_outputs, **blockchain_opts):
     """
-    High-level API (meant to be usable across blockchains)
     Given an unsigned serialized transaction, add more inputs and outputs to it.
     @new_inputs and @new_outputs will be virtualchain-formatted:
     * new_inputs[i] will have {'outpoint': {'index':..., 'hash':...}, 'script':..., 'witness_script': ...}
@@ -613,7 +609,6 @@ def tx_extend(partial_tx_hex, new_inputs, new_outputs):
 
 def btc_tx_der_encode_integer(r):
     """
-    High-level API (meant to be usable across blockchains)
     Return a DER-encoded integer
 
     Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
@@ -639,7 +634,6 @@ def btc_tx_der_encode_integer(r):
 
 def btc_tx_der_encode_length(l):
     """
-    High-level API (meant to be usable across blockchains)
     Return a DER-encoded length field
 
     Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
@@ -660,7 +654,6 @@ def btc_tx_der_encode_length(l):
 
 def btc_tx_der_encode_sequence(*encoded_pieces):
     """
-    High-level API (meant to be usable across blockchains)
     Return a DER-encoded sequence
 
     Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
@@ -673,7 +666,6 @@ def btc_tx_der_encode_sequence(*encoded_pieces):
 
 def btc_tx_der_encode_signature(r, s):
     """
-    High-level API (meant to be usable across blockchains)
     Return a DER-encoded signature as a 2-item sequence
 
     Based on code from python-ecdsa (https://github.com/warner/python-ecdsa)
@@ -1010,7 +1002,7 @@ def btc_tx_sign_multisig_segwit(tx, idx, prevout_amount, witness_script, private
     return btc_tx_serialize(txobj)
 
 
-def btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scriptsig_type, hashcode=SIGHASH_ALL, hashcodes=None, redeem_script=None, witness_script=None):
+def btc_tx_sign(tx_hex, idx, prevout_script, prevout_amount, private_key_info, scriptsig_type, hashcode=SIGHASH_ALL, hashcodes=None, redeem_script=None, witness_script=None):
     """
     Insert a scriptsig for an input that will later be spent by a p2pkh, p2pk, or p2sh scriptPubkey.
 
@@ -1026,20 +1018,20 @@ def btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scrip
     # print 'sign input {} as {}'.format(idx, scriptsig_type)
 
     if scriptsig_type in ['p2pkh', 'p2pk']:
-        if not is_singlesig(private_key_info):
+        if not btc_is_singlesig(private_key_info):
             raise ValueError('Need only one private key for {}'.format(scriptsig_type))
 
         pk = ecdsalib.ecdsa_private_key(str(private_key_info))
         pubk = pk.public_key()
         pub = pubk.to_hex()
 
-        sig = btc_tx_make_input_signature(tx, idx, prevout_script, private_key_info, hashcode)
+        sig = btc_tx_make_input_signature(tx_hex, idx, prevout_script, private_key_info, hashcode)
 
         # print 'non-segwit sig: {}'.format(sig)
         # print 'non-segwit pubk: {}'.format(pub)
 
         # NOTE: sig and pub need to be hex-encoded
-        txobj = btc_tx_deserialize(str(tx))
+        txobj = btc_tx_deserialize(str(tx_hex))
 
         if scriptsig_type == 'p2pkh':
             # scriptSig + scriptPubkey is <signature> <pubkey> OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
@@ -1057,7 +1049,7 @@ def btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scrip
         if not btc_is_singlesig_segwit(private_key_info):
             raise ValueError('Keys are not for p2wpkh or p2sh-p2wpkh')
 
-        privkey_str = str(get_singlesig_privkey(private_key_info))
+        privkey_str = str(btc_get_singlesig_privkey(private_key_info))
         pk = ecdsalib.ecdsa_private_key(privkey_str)
         pubk = pk.public_key()
         pub = keylib.key_formatting.compress(pubk.to_hex())
@@ -1065,9 +1057,9 @@ def btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scrip
         # special bip141 rule: this is always 0x1976a914{20-byte-pubkey-hash}88ac
         prevout_script_sighash = '76a914' + hashing.bin_hash160(pub.decode('hex')).encode('hex') + '88ac'
 
-        sig = btc_tx_make_input_signature_segwit(tx, idx, prevout_amount, prevout_script_sighash, privkey_str, hashcode)
+        sig = btc_tx_make_input_signature_segwit(tx_hex, idx, prevout_amount, prevout_script_sighash, privkey_str, hashcode)
 
-        txobj = btc_tx_deserialize(str(tx))
+        txobj = btc_tx_deserialize(str(tx_hex))
         txobj['ins'][idx]['witness_script'] = btc_witness_script_serialize([sig, pub])
 
         if scriptsig_type == 'p2wpkh':
@@ -1103,7 +1095,7 @@ def btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scrip
         else:
             native = False
 
-        new_tx = btc_tx_sign_multisig_segwit(tx, idx, prevout_amount, private_key_info['redeem_script'], private_key_info['private_keys'], hashcode=hashcode, hashcodes=hashcodes, native=native)
+        new_tx = btc_tx_sign_multisig_segwit(tx_hex, idx, prevout_amount, private_key_info['redeem_script'], private_key_info['private_keys'], hashcode=hashcode, hashcodes=hashcodes, native=native)
        
         txobj = btc_tx_deserialize(new_tx)
 
@@ -1114,14 +1106,14 @@ def btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scrip
     
         if not redeem_script:
             # p2sh multisig
-            if not is_multisig(private_key_info):
+            if not btc_is_multisig(private_key_info):
                 raise ValueError('No redeem script given, and not a multisig key bundle')
 
-            new_tx = btc_tx_sign_multisig(tx, idx, private_key_info['redeem_script'], private_key_info['private_keys'], hashcode=hashcode)
+            new_tx = btc_tx_sign_multisig(tx_hex, idx, private_key_info['redeem_script'], private_key_info['private_keys'], hashcode=hashcode)
 
         else:
             # NOTE: sig and pub need to be hex-encoded
-            txobj = btc_tx_deserialize(str(tx))
+            txobj = btc_tx_deserialize(str(tx_hex))
 
             # scriptSig + scriptPubkey is <redeem script> OP_HASH160 <script hash> OP_EQUAL
             txobj['ins'][idx]['script'] = btc_script_serialize([redeem_script]) 
@@ -1177,10 +1169,10 @@ def btc_privkey_scriptsig_classify(private_key_info):
     """
     What kind of scriptsig can this private key make?
     """
-    if is_singlesig(private_key_info):
+    if btc_is_singlesig(private_key_info):
         return 'p2pkh'
 
-    if is_multisig(private_key_info):
+    if btc_is_multisig(private_key_info):
         return 'p2sh'
 
     if btc_is_singlesig_segwit(private_key_info):
@@ -1192,8 +1184,7 @@ def btc_privkey_scriptsig_classify(private_key_info):
     return None
 
 
-# TODO: move to transactions.py
-def tx_sign_input(tx, idx, prevout_script, prevout_amount, private_key_info, hashcode=SIGHASH_ALL, hashcodes=None, segwit=None, scriptsig_type=None, redeem_script=None, witness_script=None):
+def btc_tx_sign_input(tx, idx, prevout_script, prevout_amount, private_key_info, hashcode=SIGHASH_ALL, hashcodes=None, segwit=None, scriptsig_type=None, redeem_script=None, witness_script=None, **blockchain_opts):
     """
     Sign a particular input in the given transaction.
     @private_key_info can either be a private key, or it can be a dict with 'redeem_script' and 'private_keys' defined
@@ -1212,8 +1203,7 @@ def tx_sign_input(tx, idx, prevout_script, prevout_amount, private_key_info, has
     return btc_tx_sign(tx, idx, prevout_script, prevout_amount, private_key_info, scriptsig_type, hashcode=hashcode, hashcodes=hashcodes, redeem_script=redeem_script, witness_script=witness_script)
 
 
-# TODO: move to transactions.py
-def tx_sign_all_unsigned_inputs(private_key_info, prev_outputs, unsigned_tx_hex, scriptsig_type=None, segwit=None):
+def btc_tx_sign_all_unsigned_inputs(private_key_info, prev_outputs, unsigned_tx_hex, scriptsig_type=None, segwit=None, **blockchain_opts):
     """
     Sign all unsigned inputs with a given key.
     Use the given outputs to fund them.
@@ -1259,7 +1249,7 @@ def tx_sign_all_unsigned_inputs(private_key_info, prev_outputs, unsigned_tx_hex,
             raise ValueError("Not enough prev_outputs ({} given, {} more prev-outputs needed)".format(len(prev_outputs), len(inputs) - prevout_index))
 
         # tx with index i signed with privkey
-        tx_hex = tx_sign_input(str(unsigned_tx_hex), i, prev_outputs[prevout_index]['out_script'], prev_outputs[prevout_index]['value'], private_key_info, segwit=do_witness_script, scriptsig_type=scriptsig_type)
+        tx_hex = btc_tx_sign_input(str(unsigned_tx_hex), i, prev_outputs[prevout_index]['out_script'], prev_outputs[prevout_index]['value'], private_key_info, segwit=do_witness_script, scriptsig_type=scriptsig_type)
         unsigned_tx_hex = tx_hex
         prevout_index += 1
 
@@ -1366,7 +1356,7 @@ def btc_tx_output_parse_script( scriptpubkey ):
     if script_type in ['p2pkh']:
         script_type = "pubkeyhash"
         reqSigs = 1
-        addr = script_hex_to_address(scriptpubkey)
+        addr = btc_script_hex_to_address(scriptpubkey)
         if not addr:
             raise ValueError("Failed to parse scriptpubkey address")
 
@@ -1375,7 +1365,7 @@ def btc_tx_output_parse_script( scriptpubkey ):
     elif script_type in ['p2sh', 'p2sh-p2wpkh', 'p2sh-p2wsh']:
         script_type = "scripthash"
         reqsigs = 1
-        addr = script_hex_to_address(scriptpubkey)
+        addr = btc_script_hex_to_address(scriptpubkey)
         if not addr:
             raise ValueError("Failed to parse scriptpubkey address")
 
