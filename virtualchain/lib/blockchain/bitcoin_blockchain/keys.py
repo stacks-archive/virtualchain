@@ -272,9 +272,8 @@ def btc_script_serialize(_script):
     return encoding.safe_hexlify( ''.join(map(_btc_script_serialize_unit, script)) )
 
 
-def make_payment_script( address, segwit=None ):
+def btc_make_payment_script( address, segwit=None, **ignored ):
     """
-    High-level API call (meant to be blockchain agnostic)
     Make a pay-to-address script.
     """
     
@@ -322,9 +321,8 @@ def make_payment_script( address, segwit=None ):
             raise ValueError("Unrecognized address '%s'" % address )
 
 
-def make_data_script( data ):
+def btc_make_data_script( data, **ignored ):
     """
-    High-level API call (meant to be blockchain agnostic)
     Make a data-bearing transaction output.
     Data must be a hex string
     Returns a hex string.
@@ -338,28 +336,8 @@ def make_data_script( data ):
     return "6a{:02x}{}".format(len(data)/2, data)
 
 
-def calculate_change_amount(inputs, send_amount, fee):
+def btc_script_hex_to_address( script_hex, segwit=None ):
     """
-    High-level API call (meant to be blockchain agnostic)
-    Find out how much change there exists between a set of tx inputs, the send amount and the tx fee.
-    @inputs must be a list of transaction inputs, i.e. [{'script_hex': str, 'value': int}]
-    """
-    # calculate the total amount coming into the transaction from the inputs
-    total_amount_in = sum([input['value'] for input in inputs])
-
-    # change = whatever is left over from the amount sent & the transaction fee
-    change_amount = total_amount_in - send_amount - fee
-
-    # check to ensure the change amount is a non-negative value and return it
-    if change_amount < 0:
-        raise ValueError('Not enough inputs for transaction (total: {}, to spend: {}, fee: {}).'.format(total_amount_in, send_amount, fee))
-
-    return change_amount
-
-
-def script_hex_to_address( script_hex, segwit=None ):
-    """
-    High-level API call (meant to be blockchain agnostic)
     Examine a script (hex-encoded) and extract an address.
     Return the address on success
     Return None on error
@@ -527,9 +505,8 @@ def btc_is_p2wsh_script( script_hex ):
         return False
 
 
-def address_reencode( address, **blockchain_opts ):
+def btc_address_reencode( address, **blockchain_opts ):
     """
-    High-level API call (meant to be blockchain-agnostic)
     Depending on whether or not we're in testnet 
     or mainnet, re-encode an address accordingly.
     """
@@ -607,9 +584,8 @@ def address_reencode( address, **blockchain_opts ):
         return keylib.b58check.b58check_encode( keylib.b58check.b58check_decode(address), vb )
 
 
-def is_multisig(privkey_info):
+def btc_is_multisig(privkey_info, **blockchain_opts):
     """
-    High-level API call (meant to be blockchain agnostic)
     Does the given private key info represent
     a multisig bundle?
 
@@ -624,7 +600,6 @@ def is_multisig(privkey_info):
 
 def btc_is_multisig_segwit(privkey_info):
     """
-    High-level API call (meant to be blockchain agnostic)
     Does the given private key info represent
     a multisig bundle?
 
@@ -640,25 +615,22 @@ def btc_is_multisig_segwit(privkey_info):
         return False
 
 
-def is_multisig_address(addr):
+def btc_is_multisig_address(addr, **blockchain_opts):
     """
-    High-level API call (meant to be blockchain agnostic)
     Is the given address a multisig address?
     """
     return btc_is_p2sh_address(addr) or btc_is_p2wsh_address(addr)
 
 
-def is_multisig_script(script_hex):
+def btc_is_multisig_script(script_hex, **blockchain_opts):
     """
-    High-level API call (meant to be blockchain-agnostic)
     Is the given script hex a multisig script?
     """
     return btc_is_p2sh_script(script_hex) or btc_is_p2wsh_script(script_hex)
 
 
-def is_singlesig(privkey_info):
+def btc_is_singlesig(privkey_info, **blockchain_opts):
     """
-    High-level API call (meant to be blockchain agnostic)
     Does the given private key info represent
     a single signature bundle? (i.e. one private key)?
 
@@ -671,12 +643,11 @@ def is_singlesig(privkey_info):
         return False
 
 
-def get_singlesig_privkey(privkey_info):
+def btc_get_singlesig_privkey(privkey_info, **blockchain_opts):
     """
-    High-level API call (meant to be blockchain agnostic)
     Get the single-sig private key from the private key info
     """
-    if is_singlesig(privkey_info):
+    if btc_is_singlesig(privkey_info):
         return privkey_info
 
     elif btc_is_singlesig_segwit(privkey_info):
@@ -685,9 +656,8 @@ def get_singlesig_privkey(privkey_info):
     return None
 
 
-def is_singlesig_address(addr):
+def btc_is_singlesig_address(addr, **blockchain_opts):
     """
-    High-level API call (meant to be blockchain agnostic)
     Is the given address a single-sig address?
     """
     return btc_is_p2pkh_address(addr)
@@ -707,9 +677,8 @@ def btc_is_singlesig_segwit(privkey_info):
         return False
 
 
-def get_privkey_address(privkey_info):
+def btc_get_privkey_address(privkey_info, **blockchain_opts):
     """
-    High-level API call (meant to be blockchain agnostic)
     Get the address for a given private key info bundle
     (be it multisig or singlesig)
 
@@ -719,10 +688,10 @@ def get_privkey_address(privkey_info):
     
     from .multisig import make_multisig_segwit_address_from_witness_script
 
-    if is_singlesig(privkey_info):
-        return address_reencode( ecdsalib.ecdsa_private_key(privkey_info).public_key().address() )
+    if btc_is_singlesig(privkey_info):
+        return btc_address_reencode( ecdsalib.ecdsa_private_key(privkey_info).public_key().address() )
     
-    if is_multisig(privkey_info) or btc_is_singlesig_segwit(privkey_info):
+    if btc_is_multisig(privkey_info) or btc_is_singlesig_segwit(privkey_info):
         redeem_script = str(privkey_info['redeem_script'])
         return btc_make_p2sh_address(redeem_script)
     
