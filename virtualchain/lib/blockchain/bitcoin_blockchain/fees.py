@@ -27,7 +27,7 @@ import logging
 
 from .bits import btc_tx_deserialize, btc_tx_is_segwit, btc_witness_script_serialize
 
-from .keys import is_singlesig, is_multisig, btc_is_singlesig_segwit, btc_is_multisig_segwit, \
+from .keys import btc_is_singlesig, btc_is_multisig, btc_is_singlesig_segwit, btc_is_multisig_segwit, \
         btc_make_p2sh_p2wsh_redeem_script, btc_make_p2sh_p2wpkh_redeem_script
 
 from .multisig import parse_multisig_redeemscript
@@ -126,13 +126,13 @@ def tx_estimate_signature_len(privkey_info):
     Return the number of bytes on success
     Raise ValueError of the key is not recognized
     """
-    if is_singlesig(privkey_info):
+    if btc_is_singlesig(privkey_info):
         # one signature produces a scriptsig of ~71 bytes (signature) + pubkey + encoding (4)
         log.debug("Single private key makes a ~73 byte signature")
         pubkey = ecdsa_private_key(privkey_info).public_key().to_hex().decode('hex')
         return 71 + len(pubkey) + 4
 
-    elif is_multisig(privkey_info):
+    elif btc_is_multisig(privkey_info):
         # one signature produces a scriptsig of redeem_script + (num_pubkeys * ~74 bytes) + encoding (~6)
         m, _ = parse_multisig_redeemscript( privkey_info['redeem_script'] )
         siglengths = 74 * m
