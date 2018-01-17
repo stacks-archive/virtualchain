@@ -971,6 +971,8 @@ class StateEngine( object ):
         into its canonical serialized form (i.e. in order to 
         generate a consensus hash.
 
+        opdata is allowed to have extra fields.  They will be ignored
+
         Return the canonical form on success.
         Return None on error.
         """
@@ -1295,7 +1297,7 @@ class StateEngine( object ):
         # the implementation has a chance here to feed any extra data into the consensus hash with this call
         # (e.g. to affect internal state transitions that occur as seconary, holistic consequences to the sequence
         # of prior operations for this block).
-        final_op = self.impl.db_commit( block_id, 'virtualchain_final', None, None, None, db_state=self.state )
+        final_op = self.impl.db_commit( block_id, 'virtualchain_final', {'virtualchain_ordered': new_ops['virtualchain_ordered']}, None, None, db_state=self.state )
         if final_op is not None:
             final_op['virtualchain_opcode'] = 'final'
             new_ops['virtualchain_final'] = [final_op]
@@ -1328,10 +1330,12 @@ class StateEngine( object ):
         consensus_hash, ops_hash = self.snapshot(block_id, new_ops['virtualchain_ordered'])
 
         # sanity check against a known sequence of consensus hashes
-        if expected_snapshots.has_key(block_id) and expected_snapshots[block_id] != consensus_hash:
-            log.error("FATAL: consensus hash mismatch at height {}: {} != {}".format(block_id, expected_snapshots[block_id], consensus_hash))
-            traceback.print_stack()
-            os.abort()
+        if expected_snapshots.has_key(block_id):
+            log.debug("Expecting CONSENSUS({}) == {}".format(block_id, expected_snapshots[block_id]))
+            if expected_snapshots[block_id] != consensus_hash:
+                log.error("FATAL: consensus hash mismatch at height {}: {} != {}".format(block_id, expected_snapshots[block_id], consensus_hash))
+                traceback.print_stack()
+                os.abort()
         
         # remove virtualchain-reserved keys
         sanitized_ops = []
