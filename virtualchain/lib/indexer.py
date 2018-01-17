@@ -324,6 +324,15 @@ class StateEngine( object ):
 
         con.row_factory = StateEngine.db_row_factory
         return con
+    
+    @classmethod
+    def db_connect(cls, path):
+        """
+        connect to our chainstate db
+        """
+        con = sqlite3.connect(path, isolation_level=None, timeout=2**30)
+        con.row_factory = StateEngine.db_row_factory
+        return con
 
     
     @classmethod
@@ -332,11 +341,9 @@ class StateEngine( object ):
         Open a connection to our chainstate db
         """
         path = config.get_snapshots_filename(impl, working_dir)
-        con = sqlite3.connect(path, isolation_level=None, timeout=2**30)
-        con.row_factory = StateEngine.db_row_factory
-        return con
+        return cls.db_connect(path)
 
-    
+
     @classmethod
     def db_row_factory(cls, cursor, row):
         """
@@ -518,7 +525,7 @@ class StateEngine( object ):
    
 
     @classmethod
-    def get_consensus_hashes(cls, impl, working_dir, start_block_height=None, end_block_height=None):
+    def get_consensus_hashes(cls, impl, working_dir, start_block_height=None, end_block_height=None, db_con=None, completeness_check=True):
         """
         Read all consensus hashes into memory.  They're write-once read-many,
         so no need to worry about cache-coherency.
@@ -526,7 +533,15 @@ class StateEngine( object ):
         if (start_block_height is None and end_block_height is not None) or (start_block_height is not None and end_block_height is None):
             raise ValueError("Need either both or neither start/end block height")
 
-        con = cls.db_open(impl, working_dir)
+        we_opened = False
+        if db_con is not None:
+            con = db_con
+
+        else:
+            assert impl and working_dir, 'Need impl and working_dir if db_con is not given'
+            con = cls.db_open(impl, working_dir)
+            we_opened = True
+
         range_query = ''
         range_args = ()
 
@@ -543,22 +558,25 @@ class StateEngine( object ):
         block_max = None
 
         for r in rows:
-            ret[r['block_id']] = r['consensus_hash']
+            block_id = int(r['block_id'])
+            ret[block_id] = r['consensus_hash']
 
-            if block_min is None or block_min > r['block_id']:
-                block_min = r['block_id']
+            if block_min is None or block_min > block_id:
+                block_min = block_id
 
-            if block_max is None or block_max < r['block_id']:
-                block_max = r['block_id']
+            if block_max is None or block_max < block_id:
+                block_max = block_id
 
-        con.close()
-        
-        # sanity check
-        for i in range(block_min,block_max+1):
-            ch = ret.get(i, None)
+        if we_opened:
+            con.close()
+       
+        if completeness_check:
+            # sanity check
+            for i in range(block_min,block_max+1):
+                ch = ret.get(i, None)
 
-            assert ch is not None, 'Missing consensus hash for {}'.format(i)
-            assert isinstance(ret[i], (str,unicode)), 'consensus hash for {} is type {}'.format(i, type(ret[i]))
+                assert ch is not None, 'Missing consensus hash for {}'.format(i)
+                assert isinstance(ret[i], (str,unicode)), 'consensus hash for {} is type {}'.format(i, type(ret[i]))
 
         return ret
    
@@ -1330,7 +1348,7 @@ class StateEngine( object ):
         consensus_hash, ops_hash = self.snapshot(block_id, new_ops['virtualchain_ordered'])
 
         # sanity check against a known sequence of consensus hashes
-        if expected_snapshots.has_key(block_id):
+        if block_id in expected_snapshots:
             log.debug("Expecting CONSENSUS({}) == {}".format(block_id, expected_snapshots[block_id]))
             if expected_snapshots[block_id] != consensus_hash:
                 log.error("FATAL: consensus hash mismatch at height {}: {} != {}".format(block_id, expected_snapshots[block_id], consensus_hash))
