@@ -1449,7 +1449,7 @@ class StateEngine( object ):
         return rc
     
    
-    def get_consensus_at( self, block_id ):
+    def get_consensus_at(self, block_id):
         """
         Get the consensus hash at a given block.
         Return the consensus hash if we have one for this block.
