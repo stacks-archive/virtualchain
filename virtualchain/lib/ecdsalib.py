@@ -232,6 +232,20 @@ def ecdsa_private_key(privkey_str=None, compressed=None):
     return _ECPrivateKey(privkey_str, compressed=compressed)
 
 
+def ecdsa_public_key(pubkey_str, compressed=None):
+    """
+    Make a public key object, but enforce the following rule:
+    * if compressed is True or False, make the key compressed/uncompressed.
+    * otherwise, return whatever the hex encoding is
+    """
+    if compressed == True:
+        pubkey_str = keylib.key_formatting.compress(pubkey_str)
+    elif compressed == False:
+        pubkey_str = keylib.key_formatting.decompress(pubkey_str)
+
+    return _ECPublicKey(pubkey_str)
+
+
 def set_privkey_compressed(privkey, compressed=True):
     """
     Make sure the private key given is compressed or not compressed
