@@ -74,7 +74,16 @@ def get_tx_fee_per_byte(bitcoind_opts=None, config_path=None, bitcoind_client=No
 
     try:
         # try to confirm in 2-3 blocks
-        fee = bitcoind_client.estimatefee(2)
+        try:
+            fee_info = bitcoind_client.estimatesmartfee(2)
+            if 'errors' in fee_info and len(fee_info['errors']) > 0:
+                fee = -1
+            else:
+                fee = fee_info['feerate']
+
+        except JSONRPCException as je:
+            fee = bitcoind_client.estimatefee(2)
+
         if fee < 0:
             # if we're testing, then use our own fee
             if os.environ.get("BLOCKSTACK_TEST") == '1' or os.environ.get("BLOCKSTACK_TESTNET", None) == "1":
