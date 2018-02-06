@@ -512,6 +512,7 @@ def btc_address_reencode( address, **blockchain_opts ):
     """
     # re-encode bitcoin address
     network = blockchain_opts.get('network', None)
+    opt_version_byte = blockchain_opts.get('version_byte', None)
 
     if btc_is_segwit_address(address):
         # bech32 address
@@ -580,6 +581,9 @@ def btc_address_reencode( address, **blockchain_opts ):
 
                 else:
                     raise ValueError("unrecognized address %s" % address)
+
+        if opt_version_byte:
+            vb = opt_version_byte
 
         return keylib.b58check.b58check_encode( keylib.b58check.b58check_decode(address), vb )
 
