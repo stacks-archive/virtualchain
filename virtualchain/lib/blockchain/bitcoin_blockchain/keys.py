@@ -558,7 +558,10 @@ def btc_address_reencode( address, **blockchain_opts ):
                 raise ValueError("Unrecognized address %s" % address)
 
         else:
-            if os.environ.get("BLOCKSTACK_TESTNET") == "1" or os.environ.get("BLOCKSTACK_TESTNET3") == "1":
+            if opt_version_byte:
+                vb = opt_version_byte
+
+            elif os.environ.get("BLOCKSTACK_TESTNET") == "1" or os.environ.get("BLOCKSTACK_TESTNET3") == "1":
                 if vb == 0 or vb == 111:
                     # convert to testnet p2pkh
                     vb = 111
@@ -581,9 +584,6 @@ def btc_address_reencode( address, **blockchain_opts ):
 
                 else:
                     raise ValueError("unrecognized address %s" % address)
-
-        if opt_version_byte:
-            vb = opt_version_byte
 
         return keylib.b58check.b58check_encode( keylib.b58check.b58check_decode(address), vb )
 
