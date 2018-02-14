@@ -25,6 +25,8 @@ import os
 import keylib
 import logging
 
+from .authproxy import JSONRPCException
+
 from .bits import btc_tx_deserialize, btc_tx_is_segwit, btc_witness_script_serialize
 
 from .keys import btc_is_singlesig, btc_is_multisig, btc_is_singlesig_segwit, btc_is_multisig_segwit, \
