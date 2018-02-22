@@ -558,7 +558,7 @@ def btc_address_reencode( address, **blockchain_opts ):
                 raise ValueError("Unrecognized address %s" % address)
 
         else:
-            if opt_version_byte:
+            if opt_version_byte is not None:
                 vb = opt_version_byte
 
             elif os.environ.get("BLOCKSTACK_TESTNET") == "1" or os.environ.get("BLOCKSTACK_TESTNET3") == "1":
