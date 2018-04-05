@@ -72,14 +72,6 @@ def get_magic_bytes():
    print "\nreference implementation of get_magic_bytes\n"
    return "vv"
 
-def get_op_processing_order():
-   """
-   Return a sequence of opcodes as a hint to the order in which 
-   the indexer should process opcodes.
-   """
-   print "\nreference implementation of get_op_processing_order\n"
-   return None 
-
 
 def db_parse( block_id, opcode, op_payload, senders, inputs, outputs, fee, db_state=None ):
    """
