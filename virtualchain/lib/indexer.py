@@ -87,8 +87,8 @@ CREATE TABLE chainstate( txid TEXT NOT NULL,
 
 CREATE TABLE snapshots(block_id INT NOT NULL,
                        timestamp INT NOT NULL,
-                       consensus_hash STRING NOT NULL,
-                       ops_hash STRING,
+                       consensus_hash TEXT NOT NULL,
+                       ops_hash TEXT,
                        PRIMARY KEY(block_id));
 """
 
