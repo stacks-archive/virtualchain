@@ -1394,7 +1394,7 @@ class StateEngine( object ):
             STATISTICS[block_id] = {
                 'consensus_hash': consensus_hash,
                 'num_parsed_ops': len(ops),
-                'num_processed_ops': len(new_ops),
+                'num_processed_ops': len(new_ops['virtualchain_ordered']),
                 'ops_hash': ops_hash,
                 'backup': backup,
             }
