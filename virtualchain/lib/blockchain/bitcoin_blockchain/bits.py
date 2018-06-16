@@ -1143,10 +1143,10 @@ def btc_script_classify(scriptpubkey, private_key_info=None):
 
         return 'p2sh'
 
-    elif scriptpubkey.startswith('00') and len(scriptpubkey) == 44:
+    elif scriptpubkey.startswith('0014') and len(scriptpubkey) == 44:
         return 'p2wpkh'
 
-    elif scriptpubkey.startswith('00') and len(scriptpubkey) == 66:
+    elif scriptpubkey.startswith('0020') and len(scriptpubkey) == 66:
         return 'p2wsh'
 
     script_tokens = btc_script_deserialize(scriptpubkey)
