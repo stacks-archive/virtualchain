@@ -129,7 +129,7 @@ def make_multisig_segwit_info( m, pks ):
 
         # 1 pubkey means p2wpkh
         key_hash = hashing.bin_hash160(pubs[0].decode('hex')).encode('hex')
-        script = '0014' + key_hash
+        script = '160014' + key_hash
         addr = btc_make_p2sh_address(script)
 
     else:
