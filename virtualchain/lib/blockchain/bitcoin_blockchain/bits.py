@@ -1146,7 +1146,7 @@ def btc_script_classify(scriptpubkey, private_key_info=None):
     elif scriptpubkey.startswith('0014') and len(scriptpubkey) == 44:
         return 'p2wpkh'
 
-    elif scriptpubkey.startswith('0020') and len(scriptpubkey) == 66:
+    elif scriptpubkey.startswith('0020') and len(scriptpubkey) == 68:
         return 'p2wsh'
 
     script_tokens = btc_script_deserialize(scriptpubkey)
@@ -1156,7 +1156,7 @@ def btc_script_classify(scriptpubkey, private_key_info=None):
     if script_tokens[0] == OPCODE_VALUES['OP_RETURN']:
         return "nulldata"
 
-    elif scriptpubkey.endswith("ae"):
+    elif script_tokens[-1] == OPCODE_VALUES['OP_CHECKMULTISIG']:
         return "multisig"
 
     elif len(script_tokens) == 2 and script_tokens[-1] == OPCODE_VALUES["OP_CHECKSIG"]:
