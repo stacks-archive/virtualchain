@@ -110,7 +110,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
         self.num_txs_processed = 0
 
         for i in xrange(first_block_height, last_block_height + 1):
-            block_header = SPVClient.read_header( spv_headers_path, i )
+            block_header = SPVClient.read_header( spv_headers_path, i, allow_none=True )
             if block_header is None:
                 continue
 
