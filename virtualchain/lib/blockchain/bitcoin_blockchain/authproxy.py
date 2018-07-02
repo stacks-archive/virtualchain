@@ -85,10 +85,8 @@ class AuthServiceProxy(object):
         self.__service_name = service_name
         self.__url = urlparse.urlparse(service_url)
         self.__legacy = legacy
-        if self.__url.port is None:
-            port = 80
-        else:
-            port = self.__url.port
+        assert self.__url.port, 'Bitcoin URL requires a port'
+
         (user, passwd) = (self.__url.username, self.__url.password)
         try:
             user = user.encode('utf8')
