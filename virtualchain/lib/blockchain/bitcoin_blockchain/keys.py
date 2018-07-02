@@ -149,9 +149,6 @@ def btc_script_to_hex(script):
 
             hex_script += "%0.2x" % value
 
-        elif isinstance(part, (int)):
-            hex_script += '%0.2x' % part
-
         elif hashing.is_hex(part):
             hex_script += '%0.2x' % hashing.count_bytes(part) + part
 
@@ -187,7 +184,8 @@ def btc_script_deserialize(script):
             pos += 1
 
         elif code <= 75:
-            # numeric constant 
+            # literal numeric constant, followed by a slice of data.
+            # push the slice of data.
             out.append(script[pos+1:pos+1+code])
             pos += 1 + code
 
@@ -208,7 +206,7 @@ def btc_script_deserialize(script):
             pos += 1
 
         else:
-            # literal
+            # raw opcode
             out.append(code)
             pos += 1
 
@@ -227,11 +225,19 @@ def _btc_script_serialize_unit(unit):
     """
     
     if isinstance(unit, int):
+        # cannot be less than -1, since btc_script_deserialize() never returns such numbers
+        if unit < -1:
+            raise ValueError('Invalid integer: {}'.format(unit))
+
         if unit < 16:
-            # OP_1 thru OP_16
-            return encoding.from_int_to_byte(unit + 80)
+            if unit == 0:
+                # OP_RESERVED
+                return encoding.from_int_to_byte(OPCODE_VALUES['OP_RESERVED'])
+            else:
+                # OP_1 thru OP_16, or OP_1NEGATE
+                return encoding.from_int_to_byte(unit + 80)
         else:
-            # pass literal
+            # pass as numeric literal or raw opcode
             return encoding.from_int_to_byte(unit)
 
     elif unit is None:
