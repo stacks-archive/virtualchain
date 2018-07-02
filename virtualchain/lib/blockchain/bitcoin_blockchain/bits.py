@@ -188,16 +188,8 @@ def _btc_witness_serialize_unit(unit):
         return b'\x00'
 
     else:
-        if len(unit) < 256:
-            # length (1 byte) + payload
-            return encoding.from_int_to_byte(len(unit)) + unit
-
-        elif len(unit) < 65536:
-            # length (2 bytes, big-endian) + payload
-            return encoding.encode(len(unit), 256, 2)[::-1] + unit
-        else:
-            # length (4 bytes, big-endian) + payload
-            return encoding.encode(len(unit), 256, 4)[::-1] + unit
+        # return as a varint-prefixed string
+        return make_var_string(unit)
 
 
 def btc_witness_script_serialize(_stack):
