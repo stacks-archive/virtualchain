@@ -36,7 +36,7 @@ def is_hex(s):
     if not isinstance(s, str):
         return False
 
-    if not re.match('^(0x)?[0-9a-fA-F]$', s):
+    if not re.match('^(0x)?[0-9a-fA-F]+$', s):
         return False
 
     # if there's a leading hex string indicator, strip it
