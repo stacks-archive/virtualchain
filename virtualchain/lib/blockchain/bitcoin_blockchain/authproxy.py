@@ -86,6 +86,7 @@ class AuthServiceProxy(object):
         self.__url = urlparse.urlparse(service_url)
         self.__legacy = legacy
         assert self.__url.port, 'Bitcoin URL requires a port'
+        port = self.__url.port
 
         (user, passwd) = (self.__url.username, self.__url.password)
         try:
