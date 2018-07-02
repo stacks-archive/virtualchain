@@ -112,7 +112,7 @@ class MerkleTree(object):
         if row_index + 1 > len(self.rows):
             raise ValueError("There aren't that many rows.")
 
-        row = self.rows(row_index)
+        row = self.rows[row_index]
         if column_index + 1 > len(row):
             raise ValueError("There aren't that many items in that row.")
 
@@ -228,7 +228,7 @@ class MerkleTree(object):
         
         if len(path) == 0:
             # single-node merkle tree
-            path = [{'hash': bin_to_hex_reversed(self.rows[0][0]), 'order': 'm'}]
+            path = [{'hash': bin_to_hex_reversed(self.rows[-1][0]), 'order': 'm'}]
 
         if not serialize:
             return path
