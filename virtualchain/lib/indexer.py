@@ -139,7 +139,7 @@ class StateEngine( object ):
     they appear in it.
     """
 
-    def __init__(self, impl, working_dir, state=None, magic_bytes=None, opcodes=None, opfields=None, initial_snapshots=None, expected_snapshots={}, backup_frequency=None, backup_max_age=None, read_only=False ):
+    def __init__(self, impl, working_dir, state=None, magic_bytes=None, opcodes=None, opfields=None, expected_snapshots={}, backup_frequency=None, backup_max_age=None, read_only=False ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -192,9 +192,6 @@ class StateEngine( object ):
         if magic_bytes is None:
             magic_bytes = impl.get_magic_bytes()
 
-        if initial_snapshots is None:
-            initial_snapshots = impl.get_initial_snapshots()
-            
         self.magic_bytes = magic_bytes
         self.opcodes = opcodes[:]
         self.opfields = copy.deepcopy(opfields)
