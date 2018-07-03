@@ -361,12 +361,12 @@ def btc_script_hex_to_address( script_hex, segwit=None ):
 
     elif script_hex.startswith('0014') and len(script_hex) == 44:
         # p2wpkh script (bech32 address)
-        hash160_bin = binascii.unhexlify(script_hex[2:])
+        hash160_bin = binascii.unhexlify(script_hex[4:])
         return segwit_addr_encode(hash160_bin) 
 
     elif script_hex.startswith('0020') and len(script_hex) == 68:
         # p2wsh script (bech32 address)
-        sha256_bin = binascii.unhexlify(script_hex[2:])
+        sha256_bin = binascii.unhexlify(script_hex[4:])
         return segwit_addr_encode(sha256_bin)
 
     return None
