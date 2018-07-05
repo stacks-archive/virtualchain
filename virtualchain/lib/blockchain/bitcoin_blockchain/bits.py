@@ -1356,7 +1356,7 @@ def btc_tx_output_parse_script( scriptpubkey ):
 
     elif script_type in ['p2sh', 'p2sh-p2wpkh', 'p2sh-p2wsh']:
         script_type = "scripthash"
-        reqsigs = 1
+        reqSigs = 1
         addr = btc_script_hex_to_address(scriptpubkey)
         if not addr:
             raise ValueError("Failed to parse scriptpubkey address")
