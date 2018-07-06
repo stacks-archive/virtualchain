@@ -261,7 +261,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
                         if sender_txid != "0000000000000000000000000000000000000000000000000000000000000000":
                             
                             # regular tx, not coinbase 
-                            assert nulldata_input_vout_index < len(sender_tx['outs']), 'Output index {} is out of bounds for {}'.format(out_index, sender_txid)
+                            assert nulldata_input_vout_index < len(sender_tx['outs']), 'Output index {} is out of bounds for {}'.format(nulldata_input_vout_index, sender_txid)
 
                             # save sender info 
                             self.add_sender_info(sender_txid, nulldata_input_vout_index, sender_tx['outs'][nulldata_input_vout_index])
@@ -297,7 +297,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
                     assert inp['outpoint']['index'] == sinfo['nulldata_vin_outpoint'], 'Mismatched sender/input index ({}: {} != {}); dump follows\n{}'.format(
                             sinfo['txid'], inp['outpoint']['index'], sinfo['nulldata_vin_outpoint'], simplejson.dumps(tx, indent=4, sort_keys=True))
 
-                    assert inp['outpoint']['hash'] == sinfo['txid'], 'Mismatched sender/input txid ({} != {}); dump follows\n{}'.format(inp['txid'], sender['txid'], simplejson.dumps(tx, indent=4, sort_keys=True))
+                    assert inp['outpoint']['hash'] == sinfo['txid'], 'Mismatched sender/input txid ({} != {}); dump follows\n{}'.format(inp['txid'], sinfo['txid'], simplejson.dumps(tx, indent=4, sort_keys=True))
 
         return True
 

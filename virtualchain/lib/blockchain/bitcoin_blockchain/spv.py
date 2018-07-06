@@ -36,6 +36,7 @@ import time
 import logging
 
 import protocoin
+import protocoin.exceptions
 from protocoin.clients import *
 from protocoin.serializers import *
 from protocoin.fields import *

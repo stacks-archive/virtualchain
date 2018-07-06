@@ -1770,7 +1770,7 @@ def state_engine_replay(consensus_impl, existing_working_dir, new_state_engine, 
     rc = existing_state_engine.db_setup()
     if not rc:
         # do not touch the existing db
-        raise Exception("Existing state in {} is unusable or corrupt".format(os.path.dirname(db_path)))
+        raise Exception("Existing state in {} is unusable or corrupt".format(os.path.dirname(existing_working_dir)))
 
     if start_block is None:
         # maybe we're resuming?
@@ -1792,7 +1792,7 @@ def state_engine_replay(consensus_impl, existing_working_dir, new_state_engine, 
 
         if block_height in expected_snapshots:
             if expected_snapshots[block_height] != consensus_hash:
-                log.error("DATABASE IS NOT CONSISTENT AT {}: {} != {}".format(block_height, expected_snashots[block_height], consensus_hash))
+                log.error("DATABASE IS NOT CONSISTENT AT {}: {} != {}".format(block_height, expected_snapshots[block_height], consensus_hash))
                 return None
 
     # final consensus hash

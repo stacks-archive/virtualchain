@@ -112,7 +112,7 @@ class MerkleTree(object):
         if row_index + 1 > len(self.rows):
             raise ValueError("There aren't that many rows.")
 
-        row = self.rows(row_index)
+        row = self.rows[row_index]
         if column_index + 1 > len(row):
             raise ValueError("There aren't that many items in that row.")
 

@@ -146,14 +146,6 @@ def make_multisig_segwit_info( m, pks ):
     }
 
 
-def make_segwit_info(privkey):
-    """
-    Make a p2sh-p2wpkh wallet
-    Return {'address': p2sh address, 'redeem_script': **the witness script**, 'private_keys': privkeys, 'segwit': True}
-    """
-    return make_multisig_segwit_info(1, [privkey])
-
-
 def make_multisig_wallet( m, n ):
     """
     Create a bundle of information
