@@ -577,18 +577,24 @@ class BlockchainDownloader( BitcoinBasicClient ):
             for outp in txdata['outs']:
                 script_type = bits.btc_script_classify(outp['script'])
                 if script_type == 'nulldata':
-                    has_nulldata = True
+                    # to be clear, we only care about outputs that take the form
+                    # OP_RETURN <string length> <string data>
                     nulldata_script = bits.btc_script_deserialize(outp['script'])
                     if len(nulldata_script) < 2:
                         # malformed OP_RETURN; no data after '6a'
                         nulldata_payload = None
-                    else:
+                        has_nulldata = False
+
+                    elif len(nulldata_script) == 2 and isinstance(nulldata_script[1], (str,unicode)):
+                        # well-formed OP_RETURN output
                         nulldata_payload = nulldata_script[1]
-                    
-                    if nulldata_payload is not None and not isinstance(nulldata_payload, (str,unicode)):
-                        # this is a malformed OP_RETURN, where the varint that should follow OP_RETURN doesn't have the data behind it.
-                        # just take the data after the varint, no matter what it is (i.e. "6a52" will be "")
-                        nulldata_payload = outp['script'][4:]
+                        has_nulldata = True
+                   
+                    else:
+                        # this is something like OP_RETURN OP_2 (e.g. "6a52")
+                        # there's nothing for us here.
+                        nulldata_payload = None
+                        has_nulldata = False
 
             # count all txs processed
             self.num_txs_processed += 1
