@@ -256,6 +256,7 @@ def btc_tx_deserialize(_tx, **blockchain_opts):
     }
     
     Derived from pybitcointools (https://github.com/vbuterin/pybitcointools) written by Vitalik Buterin
+    Throws an exception if there are remaining bytes
     """
 
     tx = None
@@ -306,7 +307,8 @@ def btc_tx_deserialize(_tx, **blockchain_opts):
     obj["locktime"] = read_as_int(ptr, tx, 4)
 
     if not ptr[0] == len(tx):
-        log.warning('Did not parse entire tx ({} bytes remaining)'.format(len(tx) - ptr[0]))
+        # log.warning('Did not parse entire tx ({} bytes remaining)'.format(len(tx) - ptr[0]))
+        raise ValueError('Did not parse entire tx ({} bytes remaining)'.format(len(tx) - ptr[0]))
 
     # hexlify each byte field 
     obj = encoding.json_changebase(obj, lambda x: encoding.safe_hexlify(x))
