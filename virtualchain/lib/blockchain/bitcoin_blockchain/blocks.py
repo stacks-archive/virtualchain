@@ -821,7 +821,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
         try:
             rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, spv_last_block )
             if not rc:
-                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                delay = min( 600, 2**i + ((2**i) * random.random()) )
                 log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, delay))
                 time.sleep( delay )
                 continue
@@ -835,7 +835,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
 
         except Exception, e:
             log.exception(e)
-            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            delay = min( 600, 2**i + ((2**i) * random.random()) )
             log.debug("Try again in %s seconds" % delay)
             time.sleep( delay )
             continue
@@ -855,7 +855,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
 
             rc = downloader.run()
             if not rc:
-                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                delay = min( 600, 2**i + ((2**i) * random.random()) )
                 log.error("Failed to fetch %s-%s; trying again in %s seconds" % (first_block_height, last_block_height, delay))
                 time.sleep( delay )
                 continue
@@ -868,7 +868,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
 
         except Exception, e:
             log.exception(e)
-            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            delay = min( 600, 2**i + ((2**i) * random.random()) )
             log.debug("Try again in %s seconds" % delay)
             time.sleep( delay )
             continue            
