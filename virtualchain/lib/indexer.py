@@ -46,7 +46,11 @@ import blockchain.transactions as transactions
 from blockchain.bitcoin_blockchain import get_bitcoin_blockchain_height
 
 log = config.get_logger("virtualchain")
- 
+
+# debug statistics (only available in testnet).
+# keyed by block height
+STATISTICS = {}
+
 RESERVED_KEYS = [
    'virtualchain_opcode',
    'virtualchain_txid',
@@ -87,8 +91,8 @@ CREATE TABLE chainstate( txid TEXT NOT NULL,
 
 CREATE TABLE snapshots(block_id INT NOT NULL,
                        timestamp INT NOT NULL,
-                       consensus_hash STRING NOT NULL,
-                       ops_hash STRING,
+                       consensus_hash TEXT NOT NULL,
+                       ops_hash TEXT,
                        PRIMARY KEY(block_id));
 """
 
@@ -135,7 +139,7 @@ class StateEngine( object ):
     they appear in it.
     """
 
-    def __init__(self, impl, working_dir, state=None, magic_bytes=None, opcodes=None, opfields=None, initial_snapshots=None, expected_snapshots={}, backup_frequency=None, backup_max_age=None, read_only=False ):
+    def __init__(self, impl, working_dir, state=None, magic_bytes=None, opcodes=None, opfields=None, expected_snapshots={}, backup_frequency=None, backup_max_age=None, read_only=False ):
         """
         Construct a state engine client, optionally from locally-cached 
         state and the set of previously-calculated consensus 
@@ -188,9 +192,6 @@ class StateEngine( object ):
         if magic_bytes is None:
             magic_bytes = impl.get_magic_bytes()
 
-        if initial_snapshots is None:
-            initial_snapshots = impl.get_initial_snapshots()
-            
         self.magic_bytes = magic_bytes
         self.opcodes = opcodes[:]
         self.opfields = copy.deepcopy(opfields)
@@ -1086,7 +1087,17 @@ class StateEngine( object ):
         consensus_hash, ops_hash = StateEngine.make_snapshot(serialized_ops, previous_consensus_hashes) 
         return consensus_hash, ops_hash
    
-   
+
+    @classmethod
+    def set_virtualchain_field(cls, opdata, virtualchain_field, value):
+        """
+        Set a virtualchain field value.
+        Used by implementations that generate extra consensus data at the end of a block
+        """
+        assert virtualchain_field in RESERVED_KEYS, 'Invalid field name {} (choose from {})'.format(virtualchain_field, ','.join(RESERVED_KEYS))
+        opdata[virtualchain_field] = value
+  
+
     def parse_transaction(self, block_id, tx):
         """
         Given a block ID and an data-bearing transaction, 
@@ -1315,12 +1326,16 @@ class StateEngine( object ):
         # the implementation has a chance here to feed any extra data into the consensus hash with this call
         # (e.g. to affect internal state transitions that occur as seconary, holistic consequences to the sequence
         # of prior operations for this block).
-        final_op = self.impl.db_commit( block_id, 'virtualchain_final', {'virtualchain_ordered': new_ops['virtualchain_ordered']}, None, None, db_state=self.state )
-        if final_op is not None:
-            final_op['virtualchain_opcode'] = 'final'
-            new_ops['virtualchain_final'] = [final_op]
-            new_ops['virtualchain_ordered'].append(final_op)
-            new_ops['virtualchain_all_ops'].append(final_op)
+        final_ops = self.impl.db_commit( block_id, 'virtualchain_final', {'virtualchain_ordered': new_ops['virtualchain_ordered']}, None, None, db_state=self.state )
+        if final_ops is not None:
+            # make sure each one has all the virtualchain reserved fields
+            for i in range(0, len(final_ops)):
+                for fieldname in RESERVED_FIELDS:
+                    assert fieldname in final_ops[i], 'Extra consensus operation at offset {} is missing {}'.format(i, fieldname)
+
+            new_ops['virtualchain_final'] = final_ops
+            new_ops['virtualchain_ordered'] += final_ops
+            new_ops['virtualchain_all_ops'] += final_ops
 
         return new_ops
     
@@ -1370,7 +1385,31 @@ class StateEngine( object ):
             log.debug("Early indexing termination at {}".format(block_id))
             return None
 
+        # store statistics if we're in test mode 
+        if os.environ.get("BLOCKSTACK_TEST"):
+            global STATISTICS
+            STATISTICS[block_id] = {
+                'consensus_hash': consensus_hash,
+                'num_parsed_ops': len(ops),
+                'num_processed_ops': len(new_ops['virtualchain_ordered']),
+                'ops_hash': ops_hash,
+                'backup': backup,
+            }
+
         return consensus_hash
+
+    
+    @classmethod
+    def get_block_statistics(cls, block_id):
+        """
+        Get block statistics.
+        Only works in test mode.
+        """
+        if not os.environ.get("BLOCKSTACK_TEST"):
+            raise Exception("This method is only available in the test framework")
+
+        global STATISTICS
+        return STATISTICS.get(block_id)
 
 
     @classmethod

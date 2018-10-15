@@ -436,9 +436,6 @@ def verify_digest(hash_hex, pubkey_hex, sigb64, hashfunc=hashlib.sha256):
     Return True if so
     Return False if not
     """
-    # NOTE: this method uses the ecdsa package, not cryptography.
-    # it is much slower, since it's pure Python.
-
     if not isinstance(hash_hex, (str, unicode)):
         raise ValueError("hash hex is not a string")
 

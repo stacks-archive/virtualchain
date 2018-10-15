@@ -314,7 +314,7 @@ class BlockHeaderClient( BitcoinBasicClient ):
         # insert into to local headers database
         next_block_id = current_height + 1
         for block_header in block_headers:
-            with open(self.path, "r+") as f:
+            with open(self.path, "rb+") as f:
 
                 # omit tx count 
                 block_header.txns_count = 0
@@ -461,7 +461,7 @@ class SPVClient(object):
 
 
     @classmethod
-    def read_header_at( cls, f ):
+    def read_header_at( cls, f):
         """
         Given an open file-like object, read a block header
         from it and return it as a dict containing:
@@ -509,7 +509,7 @@ class SPVClient(object):
 
 
     @classmethod
-    def read_header(cls, headers_path, block_height):
+    def read_header(cls, headers_path, block_height, allow_none=False):
         """
         Get a block header at a particular height from disk.
         Return the header if found
@@ -521,7 +521,10 @@ class SPVClient(object):
             sb = os.stat( headers_path )
             if sb.st_size < BLOCK_HEADER_SIZE * block_height:
                 # beyond EOF 
-                return None 
+                if allow_none:
+                    return None 
+                else:
+                    raise Exception('EOF on block headers')
 
             with open( headers_path, "rb" ) as f:
                 f.seek( block_height * BLOCK_HEADER_SIZE, os.SEEK_SET )
@@ -529,7 +532,10 @@ class SPVClient(object):
 
             return hdr
         else:
-            return None
+            if allow_none:
+                return None
+            else:
+                raise Exception('No such file or directory: {}'.format(headers_path))
 
 
     @classmethod
@@ -546,7 +552,7 @@ class SPVClient(object):
             return 0x1d00ffff, max_target
 
         first = SPVClient.read_header( path, (index-1)*BLOCK_DIFFICULTY_CHUNK_SIZE)
-        last = SPVClient.read_header( path, index*BLOCK_DIFFICULTY_CHUNK_SIZE - 1)
+        last = SPVClient.read_header( path, index*BLOCK_DIFFICULTY_CHUNK_SIZE - 1, allow_none=True)
         if last is None:
             for h in chain:
                 if h.get('block_height') == index*BLOCK_DIFFICULTY_CHUNK_SIZE - 1:
@@ -679,7 +685,7 @@ class SPVClient(object):
 
         NOTE: this is slow
         """
-        with open( path, "r" ) as f:
+        with open( path, "rb" ) as f:
             chain_raw = f.read()
 
         for blk in xrange(0, len(chain_raw) / (BLOCK_HEADER_SIZE)):

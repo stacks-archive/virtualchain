@@ -23,6 +23,7 @@
 from binascii import hexlify, unhexlify
 import hashlib
 from hashlib import sha256
+import re
 
 def hex_to_int(s):
     try:
@@ -34,9 +35,14 @@ def is_hex(s):
     # make sure that s is a string
     if not isinstance(s, str):
         return False
+
+    if not re.match('^(0x)?[0-9a-fA-F]+$', s):
+        return False
+
     # if there's a leading hex string indicator, strip it
     if s[0:2] == '0x':
         s = s[2:]
+
     # try to cast the string as an int
     try:
         i = hex_to_int(s)

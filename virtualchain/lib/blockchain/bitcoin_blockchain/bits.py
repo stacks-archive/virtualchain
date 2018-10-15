@@ -188,16 +188,8 @@ def _btc_witness_serialize_unit(unit):
         return b'\x00'
 
     else:
-        if len(unit) < 256:
-            # length (1 byte) + payload
-            return encoding.from_int_to_byte(len(unit)) + unit
-
-        elif len(unit) < 65536:
-            # length (2 bytes, big-endian) + payload
-            return encoding.encode(len(unit), 256, 2)[::-1] + unit
-        else:
-            # length (4 bytes, big-endian) + payload
-            return encoding.encode(len(unit), 256, 4)[::-1] + unit
+        # return as a varint-prefixed string
+        return make_var_string(unit)
 
 
 def btc_witness_script_serialize(_stack):
@@ -264,6 +256,7 @@ def btc_tx_deserialize(_tx, **blockchain_opts):
     }
     
     Derived from pybitcointools (https://github.com/vbuterin/pybitcointools) written by Vitalik Buterin
+    Throws an exception if there are remaining bytes
     """
 
     tx = None
@@ -314,7 +307,8 @@ def btc_tx_deserialize(_tx, **blockchain_opts):
     obj["locktime"] = read_as_int(ptr, tx, 4)
 
     if not ptr[0] == len(tx):
-        log.warning('Did not parse entire tx ({} bytes remaining)'.format(len(tx) - ptr[0]))
+        # log.warning('Did not parse entire tx ({} bytes remaining)'.format(len(tx) - ptr[0]))
+        raise ValueError('Did not parse entire tx ({} bytes remaining)'.format(len(tx) - ptr[0]))
 
     # hexlify each byte field 
     obj = encoding.json_changebase(obj, lambda x: encoding.safe_hexlify(x))
@@ -1143,10 +1137,10 @@ def btc_script_classify(scriptpubkey, private_key_info=None):
 
         return 'p2sh'
 
-    elif scriptpubkey.startswith('00') and len(scriptpubkey) == 44:
+    elif scriptpubkey.startswith('0014') and len(scriptpubkey) == 44:
         return 'p2wpkh'
 
-    elif scriptpubkey.startswith('00') and len(scriptpubkey) == 66:
+    elif scriptpubkey.startswith('0020') and len(scriptpubkey) == 68:
         return 'p2wsh'
 
     script_tokens = btc_script_deserialize(scriptpubkey)
@@ -1156,7 +1150,7 @@ def btc_script_classify(scriptpubkey, private_key_info=None):
     if script_tokens[0] == OPCODE_VALUES['OP_RETURN']:
         return "nulldata"
 
-    elif scriptpubkey.endswith("ae"):
+    elif script_tokens[-1] == OPCODE_VALUES['OP_CHECKMULTISIG']:
         return "multisig"
 
     elif len(script_tokens) == 2 and script_tokens[-1] == OPCODE_VALUES["OP_CHECKSIG"]:
@@ -1364,7 +1358,7 @@ def btc_tx_output_parse_script( scriptpubkey ):
 
     elif script_type in ['p2sh', 'p2sh-p2wpkh', 'p2sh-p2wsh']:
         script_type = "scripthash"
-        reqsigs = 1
+        reqSigs = 1
         addr = btc_script_hex_to_address(scriptpubkey)
         if not addr:
             raise ValueError("Failed to parse scriptpubkey address")

@@ -149,9 +149,6 @@ def btc_script_to_hex(script):
 
             hex_script += "%0.2x" % value
 
-        elif isinstance(part, (int)):
-            hex_script += '%0.2x' % part
-
         elif hashing.is_hex(part):
             hex_script += '%0.2x' % hashing.count_bytes(part) + part
 
@@ -187,7 +184,8 @@ def btc_script_deserialize(script):
             pos += 1
 
         elif code <= 75:
-            # numeric constant 
+            # literal numeric constant, followed by a slice of data.
+            # push the slice of data.
             out.append(script[pos+1:pos+1+code])
             pos += 1 + code
 
@@ -208,7 +206,7 @@ def btc_script_deserialize(script):
             pos += 1
 
         else:
-            # literal
+            # raw opcode
             out.append(code)
             pos += 1
 
@@ -227,11 +225,19 @@ def _btc_script_serialize_unit(unit):
     """
     
     if isinstance(unit, int):
+        # cannot be less than -1, since btc_script_deserialize() never returns such numbers
+        if unit < -1:
+            raise ValueError('Invalid integer: {}'.format(unit))
+
         if unit < 16:
-            # OP_1 thru OP_16
-            return encoding.from_int_to_byte(unit + 80)
+            if unit == 0:
+                # OP_RESERVED
+                return encoding.from_int_to_byte(OPCODE_VALUES['OP_RESERVED'])
+            else:
+                # OP_1 thru OP_16, or OP_1NEGATE
+                return encoding.from_int_to_byte(unit + 80)
         else:
-            # pass literal
+            # pass as numeric literal or raw opcode
             return encoding.from_int_to_byte(unit)
 
     elif unit is None:
@@ -289,12 +295,12 @@ def btc_make_payment_script( address, segwit=None, **ignored ):
 
         if len(withash) == 20:
             # p2wpkh
-            script_hex = '00' + withash.encode('hex')
+            script_hex = '0014' + withash.encode('hex')
             return script_hex
             
         elif len(withash) == 32:
             # p2wsh
-            script_hex = '00' + withash.encode('hex')
+            script_hex = '0020' + withash.encode('hex')
             return script_hex
 
         else:
@@ -353,14 +359,14 @@ def btc_script_hex_to_address( script_hex, segwit=None ):
         hash160_bin = binascii.unhexlify(script_hex[4:-2])
         return bin_hash160_to_address(hash160_bin, version_byte=multisig_version_byte)
 
-    elif script_hex.startswith('00') and len(script_hex) == 44:
+    elif script_hex.startswith('0014') and len(script_hex) == 44:
         # p2wpkh script (bech32 address)
-        hash160_bin = binascii.unhexlify(script_hex[2:])
+        hash160_bin = binascii.unhexlify(script_hex[4:])
         return segwit_addr_encode(hash160_bin) 
 
-    elif script_hex.startswith('00') and len(script_hex) == 66:
+    elif script_hex.startswith('0020') and len(script_hex) == 68:
         # p2wsh script (bech32 address)
-        sha256_bin = binascii.unhexlify(script_hex[2:])
+        sha256_bin = binascii.unhexlify(script_hex[4:])
         return segwit_addr_encode(sha256_bin)
 
     return None

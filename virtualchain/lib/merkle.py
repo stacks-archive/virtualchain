@@ -228,7 +228,7 @@ class MerkleTree(object):
         
         if len(path) == 0:
             # single-node merkle tree
-            path = [{'hash': bin_to_hex_reversed(self.rows[0][0]), 'order': 'm'}]
+            path = [{'hash': bin_to_hex_reversed(self.rows[-1][0]), 'order': 'm'}]
 
         if not serialize:
             return path

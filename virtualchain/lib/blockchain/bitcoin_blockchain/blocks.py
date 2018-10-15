@@ -110,7 +110,7 @@ class BlockchainDownloader( BitcoinBasicClient ):
         self.num_txs_processed = 0
 
         for i in xrange(first_block_height, last_block_height + 1):
-            block_header = SPVClient.read_header( spv_headers_path, i )
+            block_header = SPVClient.read_header( spv_headers_path, i, allow_none=True )
             if block_header is None:
                 continue
 
@@ -577,18 +577,24 @@ class BlockchainDownloader( BitcoinBasicClient ):
             for outp in txdata['outs']:
                 script_type = bits.btc_script_classify(outp['script'])
                 if script_type == 'nulldata':
-                    has_nulldata = True
+                    # to be clear, we only care about outputs that take the form
+                    # OP_RETURN <string length> <string data>
                     nulldata_script = bits.btc_script_deserialize(outp['script'])
                     if len(nulldata_script) < 2:
                         # malformed OP_RETURN; no data after '6a'
                         nulldata_payload = None
-                    else:
+                        has_nulldata = False
+
+                    elif len(nulldata_script) == 2 and isinstance(nulldata_script[1], (str,unicode)):
+                        # well-formed OP_RETURN output
                         nulldata_payload = nulldata_script[1]
-                    
-                    if nulldata_payload is not None and not isinstance(nulldata_payload, (str,unicode)):
-                        # this is a malformed OP_RETURN, where the varint that should follow OP_RETURN doesn't have the data behind it.
-                        # just take the data after the varint, no matter what it is (i.e. "6a52" will be "")
-                        nulldata_payload = outp['script'][4:]
+                        has_nulldata = True
+                   
+                    else:
+                        # this is something like OP_RETURN OP_2 (e.g. "6a52")
+                        # there's nothing for us here.
+                        nulldata_payload = None
+                        has_nulldata = False
 
             # count all txs processed
             self.num_txs_processed += 1
@@ -815,7 +821,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
         try:
             rc = SPVClient.sync_header_chain( headers_path, bitcoind_server, spv_last_block )
             if not rc:
-                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                delay = min( 600, 2**i + ((2**i) * random.random()) )
                 log.error("Failed to synchronize SPV headers (%s) up to %s.  Try again in %s seconds" % (headers_path, last_block_height, delay))
                 time.sleep( delay )
                 continue
@@ -829,7 +835,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
 
         except Exception, e:
             log.exception(e)
-            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            delay = min( 600, 2**i + ((2**i) * random.random()) )
             log.debug("Try again in %s seconds" % delay)
             time.sleep( delay )
             continue
@@ -849,7 +855,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
 
             rc = downloader.run()
             if not rc:
-                delay = min( 3600, 2**i + ((2**i) * random.random()) )
+                delay = min( 600, 2**i + ((2**i) * random.random()) )
                 log.error("Failed to fetch %s-%s; trying again in %s seconds" % (first_block_height, last_block_height, delay))
                 time.sleep( delay )
                 continue
@@ -862,7 +868,7 @@ def get_bitcoin_virtual_transactions(blockchain_opts, first_block_height, last_b
 
         except Exception, e:
             log.exception(e)
-            delay = min( 3600, 2**i + ((2**i) * random.random()) )
+            delay = min( 600, 2**i + ((2**i) * random.random()) )
             log.debug("Try again in %s seconds" % delay)
             time.sleep( delay )
             continue            

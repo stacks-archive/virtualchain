@@ -4,7 +4,7 @@
     Virtualchain
     ~~~~~
     copyright: (c) 2014 by Halfmoon Labs, Inc.
-    copyright: (c) 2015 by Blockstack.org
+    copyright: (c) 2015-2018 by Blockstack.org
     
     This file is part of Virtualchain
     
@@ -21,4 +21,4 @@
     along with Virtualchain.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-__version__ = '0.18.0.2'
+__version__ = '0.20.0'
