@@ -1719,7 +1719,11 @@ def sqlite3_backup(src_path, dest_path):
                     # not a valid sqlite3 file
                     log.error("File {} is not a SQLite database".format(src_path))
                     return False
- 
+
+                else:
+                    # some other failure.  Try again
+                    log.error('Failed to back up with "{}".  Error log follows.\n{}'.format(" ".join(sqlite3_cmd), err))
+                    continue
             else:
                 break
 
