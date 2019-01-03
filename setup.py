@@ -47,7 +47,7 @@ setup(
         'ecdsa>=0.13',
         'six>=1.10.0',
         'keylib>=0.1.1',
-        'requests>=2.18',
+        'requests>=2.20',
     ],
     classifiers=[
         'Intended Audience :: Developers',
