@@ -16,7 +16,7 @@ One way to think of these state machines is as standalone smart contracts. When 
 
 ## How scalable is virtualchain?
 
-The scalability of virtualchain really depends on the scalability of the underlying blockchain. In our implementation on Bitcoin, every virtualchain transaction is a Bitcoin transaction. In 2017, we saw that Bitcoin transaction fees went up to $40-$50 even for low-value virtualchain transactions. Also, embedding a lot of additional data directly in the Bitcoin blockchain is not scalable in general. Lessons from the virtualchain work led to the design of the [Stacks programming layer](https://github.com/stacks-network/stacks), which maintains a separate ledger from Bitcoin and only stores hashes of data at the Bitcoin layer.
+The scalability of virtualchain really depends on the scalability of the underlying blockchain. In our implementation on Bitcoin, every virtualchain transaction is a Bitcoin transaction. In 2017, we saw that Bitcoin transaction fees went up to $40-$50 even for low-value virtualchain transactions. Also, embedding a lot of additional data directly in the Bitcoin blockchain is not scalable in general. Lessons from the virtualchain work led to the design of the [Stacks programming layer](https://github.com/stacks-network/stacks), which maintains a separate ledger from Bitcoin and only stores hashes of data at the Bitcoin layer. An additional benefit of using a separate ledger with Stacks is that fully-expressive smart contracts can be introduced (Stacks implemented the [Clarity language](https://clarity-lang.org/) for smart contracts).
 
 ## Installation
 
